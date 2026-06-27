@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}SOP · {{ brand_name }}{% endblock %}
+{% block page_title %}SOP{% endblock %}
+{% block page_subtitle %}Procédures {{ brand_name }} — choisissez un département{% endblock %}
+
+{% block page_buttons %}
+{% if current_user.is_admin %}
+<a href="{{ url_for('help.departments_manage') }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-sitemap"></i> Départements</a>
+<a href="{{ url_for('help.manage') }}" class="btn btn-sm btn-brand"><i class="fas fa-cog"></i> Gérer</a>
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+    .dept-card {
+        background: white; border: 1px solid var(--pim-border); border-radius: 14px;
+        padding: 26px 22px; height: 100%; text-decoration: none; color: inherit;
+        display: flex; flex-direction: column; align-items: flex-start;
+        transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+    }
+    .dept-card:hover { transform: translateY(-3px); box-shadow: var(--pim-shadow-md); border-color: var(--pim-primary); color: inherit; }
+    .dept-ico {
+        width: 54px; height: 54px; border-radius: 14px; margin-bottom: 16px;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: rgba(var(--pim-primary-rgb), 0.12); color: var(--pim-primary); font-size: 24px;
+    }
+    .dept-card h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; color: var(--pim-heading); }
+    .dept-card .count { font-size: 13px; color: var(--pim-text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "help/_searchbar.html" %}
+
+<div id="browse">
+    {% if departments %}
+    <div class="row g-3">
+        {% for d in departments %}
+        <div class="col-12 col-sm-6 col-lg-4">
+            <a href="{{ url_for('help.department', dept_slug=d.slug) }}" class="dept-card">
+                <span class="dept-ico"><i class="fas {{ d.icon }}"></i></span>
+                <h3>{{ d.name }}</h3>
+                <span class="count">{{ counts.get(d.slug, 0) }} SOP</span>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+        <i class="fas fa-folder-open fa-2x mb-3 d-block" style="opacity:.4;"></i>
+        Aucun département pour l'instant.
+        {% if current_user.is_admin %}
+        <div class="mt-3"><a href="{{ url_for('help.departments_manage') }}" class="btn btn-sm btn-brand">Créer un département</a></div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

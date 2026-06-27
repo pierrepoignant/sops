@@ -1,0 +1,205 @@
+from flask import Flask, render_template, redirect, url_for, jsonify, g, request
+from flask_login import LoginManager, current_user
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.routing import BuildError
+from init_db import db
+from init_cache import cache
+from config import initialize_config
+import os
+from datetime import datetime
+
+from brands import brand_for_host, get_brand, BRANDS
+
+
+def create_app(db_name='ovh', redis_server='localhost'):
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    app = Flask(__name__, instance_relative_config=True)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+    app.config.from_mapping(
+        SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-change-me-in-production'),
+        PREFERRED_URL_SCHEME='https',
+    )
+
+    # --- Cache (Redis in prod, SimpleCache locally) ---
+    cache_type = os.environ.get('CACHE_TYPE', 'SimpleCache')
+    app.config['CACHE_TYPE'] = cache_type
+    if cache_type == 'RedisCache':
+        app.config['CACHE_REDIS_HOST'] = os.environ.get('REDIS_HOST', redis_server)
+        app.config['CACHE_REDIS_PORT'] = int(os.environ.get('REDIS_PORT', 6379))
+        app.config['CACHE_REDIS_DB'] = 0
+        app.config['CACHE_REDIS_URL'] = f"redis://{app.config['CACHE_REDIS_HOST']}:{app.config['CACHE_REDIS_PORT']}/0"
+    cache.init_app(app)
+
+    # --- Pull database-* sections out of the environment early ---
+    from config.env_loader import get_env_var, ENV_VAR_KEYS
+    for section, keys in ENV_VAR_KEYS.items():
+        if not section.startswith('database-'):
+            continue
+        if section not in app.config:
+            app.config[section] = {}
+        for key in keys:
+            env_val = get_env_var(section, key)
+            if env_val is not None:
+                app.config[section][key] = env_val
+
+    try:
+        os.makedirs(app.instance_path)
+    except OSError:
+        pass
+
+    # --- Database URI ---
+    if db_name == 'sqlite':
+        # Zero-config local development — no MySQL needed.
+        app.config['SQLALCHEMY_DATABASE_URI'] = (
+            'sqlite:///' + os.path.join(app.instance_path, 'sops.db')
+        )
+        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    else:
+        db_section = f'database-{db_name}'
+        db_config = app.config.get(db_section, {})
+        app.config['SQLALCHEMY_DATABASE_URI'] = (
+            f"mysql+pymysql://{db_config['user']}:{db_config['password']}"
+            f"@{db_config['host']}:{db_config['port']}/{db_config['name']}"
+        )
+        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+        import ssl
+        engine_options = {
+            'pool_size': 10,
+            'max_overflow': 10,
+            'pool_recycle': 3600,
+            'pool_pre_ping': True,
+            'pool_timeout': 30,
+        }
+        if db_name != 'local':
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+            engine_options['connect_args'] = {'ssl': ssl_ctx}
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
+
+    db.init_app(app)
+    initialize_config(app)
+
+    # Re-load every section now that config is initialized (OAuth, etc.).
+    for section, keys in ENV_VAR_KEYS.items():
+        if section not in app.config:
+            app.config[section] = {}
+        for key in keys:
+            env_val = get_env_var(section, key)
+            if env_val is not None:
+                app.config[section][key] = env_val
+
+    # --- Login ---
+    login_manager = LoginManager()
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+
+    # --- Per-request brand (host-based). Must run before anything that needs it. ---
+    @app.before_request
+    def set_brand():
+        g.brand = brand_for_host(request.host)
+
+    # --- Blueprints ---
+    from auth.models import User  # noqa: F401
+    from auth import auth_bp, init_oauth
+    app.register_blueprint(auth_bp)
+    init_oauth(app)
+
+    from administration import administration_bp
+    app.register_blueprint(administration_bp)
+
+    from media import media_bp
+    app.register_blueprint(media_bp)
+
+    from help import help_bp
+    app.register_blueprint(help_bp)
+
+    # --- Module access enforcement + template helpers ---
+    from administration.permissions import (enforce_module_access,
+                                            user_has_module_access, user_modules)
+    app.before_request(enforce_module_access)
+
+    @app.context_processor
+    def inject_context():
+        def safe_url_for(endpoint, fallback='#', **values):
+            try:
+                return url_for(endpoint, **values)
+            except BuildError:
+                return fallback
+
+        brand_id = getattr(g, 'brand', None) or 'sablesienne'
+        brand = get_brand(brand_id)
+        return {
+            'has_module': lambda mid: user_has_module_access(current_user, mid),
+            'user_modules': lambda: user_modules(current_user),
+            'safe_url_for': safe_url_for,
+            'current_brand': brand_id,
+            'brand': brand,
+            'brand_name': brand['name'],
+            'brand_logo': url_for('static', filename=f"brand/{brand_id}/logo.png"),
+        }
+
+    with app.app_context():
+        db.create_all()
+
+    # Idempotent one-time seeding of the media library + SOP center.
+    from help.seed import run_seed
+    run_seed(app)
+
+    @app.before_request
+    def log_user_visit():
+        from flask_login import current_user as cu
+        from flask import request as req
+        if cu.is_authenticated and req.endpoint and not req.endpoint.startswith('static'):
+            from auth.models import UserVisit
+            visit = UserVisit(
+                user_id=cu.id,
+                endpoint=req.endpoint,
+                ip_address=req.remote_addr,
+            )
+            db.session.add(visit)
+            db.session.commit()
+
+    @app.route('/')
+    def index():
+        if not current_user.is_authenticated:
+            return redirect(url_for('auth.login'))
+        return redirect(url_for('home'))
+
+    @app.route('/home')
+    def home():
+        if not current_user.is_authenticated:
+            return redirect(url_for('auth.login'))
+        return render_template('home.html')
+
+    @app.route('/healthz')
+    def health_check():
+        try:
+            from sqlalchemy import text
+            db.session.execute(text('SELECT 1'))
+            return jsonify({
+                'status': 'healthy',
+                'timestamp': datetime.now().isoformat(),
+            }), 200
+        except Exception as e:
+            return jsonify({
+                'status': 'unhealthy',
+                'error': str(e),
+            }), 503
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        from auth.models import User
+        return db.session.get(User, user_id)
+
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        try:
+            db.session.remove()
+        except Exception:
+            pass
+
+    return app

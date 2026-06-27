@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ art.title }} · SOP{% endblock %}
+{% block page_title %}{{ art.title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">SOP</a>{% if dept %} · <a href="{{ url_for('help.department', dept_slug=dept.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">{{ dept.name }}</a>{% endif %} · {{ art.category }}{% endblock %}
+
+{% block page_buttons %}
+{% if current_user.is_admin %}
+<a href="{{ url_for('help.edit', art_id=art.id) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i> Modifier</a>
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+    .help-nav { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px; position: sticky; top: 16px; }
+    .help-nav .nav-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--pim-text-muted); margin: 10px 0 4px; font-weight: 700; }
+    .help-nav .nav-subcat { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--pim-text-muted); margin: 8px 0 2px 8px; }
+    .help-nav .nav-sub a { margin-left: 8px; }
+    .help-nav a { display: block; padding: 4px 6px; border-radius: 5px; color: var(--pim-text); text-decoration: none; font-size: 13px; }
+    .help-nav a:hover { background: var(--pim-bg-subtle); color: var(--pim-primary); }
+    .help-nav a.active { background: rgba(var(--pim-primary-rgb), 0.10); color: var(--pim-primary); font-weight: 600; }
+    .article-body { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 26px 30px; }
+    .article-body h2 { font-size: 20px; margin-top: 22px; color: var(--pim-primary); }
+    .article-body h3 { font-size: 17px; margin-top: 18px; }
+    .article-body h4 { font-size: 15px; margin-top: 14px; font-weight: 700; }
+    .article-body img, .article-body .help-img { max-width: 100%; height: auto; border-radius: 8px; margin: 12px 0; }
+    .article-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+    .article-body th, .article-body td { border: 1px solid var(--pim-border); padding: 6px 10px; vertical-align: top; }
+    .article-body ul, .article-body ol { padding-left: 22px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "help/_searchbar.html" %}
+<div class="row g-3">
+    <div class="col-lg-3 d-none d-lg-block">
+        <div class="help-nav">
+            {% macro nav_links(arts) %}
+                {% for a in arts %}
+                <a href="{{ url_for('help.article', slug=a.slug) }}" class="{% if a.id == art.id %}active{% endif %}">{{ a.title }}</a>
+                {% endfor %}
+            {% endmacro %}
+            {% for n in tree %}
+            <div class="nav-cat">{{ n.name }}</div>
+            {{ nav_links(n.articles) }}
+            {% for c in n.children %}
+            <div class="nav-subcat">{{ c.name }}</div>
+            <div class="nav-sub">{{ nav_links(c.articles) }}</div>
+            {% endfor %}
+            {% endfor %}
+            {% for o in orphans %}
+            <div class="nav-cat">{{ o.name }}</div>
+            {{ nav_links(o.articles) }}
+            {% endfor %}
+        </div>
+    </div>
+    <div class="col-lg-9">
+        {% if not art.is_published %}
+        <div class="alert alert-warning py-2"><i class="fas fa-eye-slash"></i> Brouillon (non publié)</div>
+        {% endif %}
+        <div class="article-body">
+            {{ art.body_html | safe }}
+        </div>
+    </div>
+</div>
+{% endblock %}

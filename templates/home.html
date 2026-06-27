@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Accueil · SOP {{ brand_name }}{% endblock %}
+{% block page_title %}Espace SOP{% endblock %}
+{% block page_subtitle %}{{ brand_name }}{% endblock %}
+{% block head %}
+<style>
+    .hero-card {
+        background: linear-gradient(120deg, var(--pim-primary) 0%, var(--pim-primary-hover) 100%);
+        color: var(--pim-on-primary);
+        border: none;
+        border-radius: 14px;
+        box-shadow: var(--pim-shadow-lg);
+    }
+    .hero-card .btn-light { color: var(--pim-primary); font-weight: 600; }
+    .module-card {
+        border: 1px solid var(--pim-border);
+        border-radius: 12px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        height: 100%;
+    }
+    .module-card:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--pim-shadow-md);
+    }
+    .module-icon {
+        width: 42px; height: 42px; border-radius: 10px;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: rgba(var(--pim-primary-rgb), 0.12); color: var(--pim-primary); font-size: 18px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card hero-card mb-4">
+    <div class="card-body p-4 p-md-5">
+        <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+            <div>
+                <h2 class="h4 mb-2">Bienvenue, {{ current_user.display_name }}</h2>
+                <p class="mb-0" style="opacity:.85;">Retrouvez les procédures (SOP) de {{ brand_name }}, organisées par département.</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('help.index') }}" class="btn btn-light">
+                    <i class="fas fa-book-open me-2"></i>Ouvrir les SOP
+                </a>
+                <a href="{{ url_for('auth.profile') }}" class="btn btn-outline-light">
+                    <i class="fas fa-user-circle me-2"></i>Mon profil
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-12 col-lg-6">
+        <div class="card module-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="module-icon me-2"><i class="fas fa-book-open"></i></span>
+                    <h3 class="h5 mb-0">SOP</h3>
+                </div>
+                <p class="text-muted mb-3">Les procédures de {{ brand_name }}, par département puis par thème. Recherchez ou parcourez.</p>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{{ url_for('help.index') }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-folder-open me-1"></i>Parcourir
+                    </a>
+                    <a href="{{ url_for('help.index') }}#q" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-search me-1"></i>Rechercher
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if has_module('administration') %}
+    <div class="col-12 col-lg-6">
+        <div class="card module-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="module-icon me-2"><i class="fas fa-shield-alt"></i></span>
+                    <h3 class="h5 mb-0">Administration</h3>
+                </div>
+                <p class="text-muted mb-3">Gérez les utilisateurs, les groupes et suivez les visites de la plateforme.</p>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{{ url_for('administration.admin_users') }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-users-cog me-1"></i>Utilisateurs
+                    </a>
+                    <a href="{{ url_for('administration.groups_list') }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-user-shield me-1"></i>Groupes
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

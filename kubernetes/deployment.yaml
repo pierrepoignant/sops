@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sops
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sops
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 5
+  template:
+    metadata:
+      labels:
+        app: sops
+    spec:
+      imagePullSecrets:
+        - name: ovh-registry-secret
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: sops
+          image: __IMAGE__:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5008
+          env:
+            - name: REDIS_HOST
+              value: redis-service
+            - name: REDIS_PORT
+              value: "6379"
+            - name: CACHE_TYPE
+              value: RedisCache
+          envFrom:
+            - secretRef:
+                name: sops-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 5008
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5008
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5008
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sops-service
+  namespace: default
+spec:
+  selector:
+    app: sops
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5008
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sops-ingress
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: sops.gourmiz.fr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sops-service
+                port:
+                  number: 80
+    - host: sops.essenciagua.fr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sops-service
+                port:
+                  number: 80
+    - host: sops.sablesienne.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sops-service
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - sops.gourmiz.fr
+      secretName: sops-gourmiz-tls
+    - hosts:
+        - sops.essenciagua.fr
+      secretName: sops-essenciagua-tls
+    - hosts:
+        - sops.sablesienne.com
+      secretName: sops-sablesienne-tls

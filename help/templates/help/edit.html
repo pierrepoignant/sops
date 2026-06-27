@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+
+{% block title %}{% if art %}Modifier{% else %}Nouveau SOP{% endif %} · SOP{% endblock %}
+{% block page_title %}{% if art %}Modifier le SOP{% else %}Nouveau SOP{% endif %}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.manage', department=dept.slug) }}" style="color:#6c757d;text-decoration:none;">&larr; Gérer les SOP</a>{% if dept %} · {{ dept.name }}{% endif %}{% endblock %}
+
+{% block head %}
+<link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet">
+<style>
+    .form-label-sm { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; color: #6c757d; margin-bottom: 6px; display: block; }
+    #editor { min-height: 360px; background: white; }
+    .ql-toolbar.ql-snow, .ql-container.ql-snow { border-color: var(--pim-border-strong); }
+    /* Tables inside the editor — mirror the published article styling */
+    #editor table { border-collapse: collapse; width: auto; margin: 8px 0; }
+    #editor td, #editor th { border: 1px solid #d9c7ad; padding: 5px 9px; min-width: 42px; }
+    /* Table mini-toolbar */
+    .tbl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px;
+               background: #faf6f0; border: 1px solid var(--pim-border-strong); border-bottom: none; border-radius: 8px 8px 0 0; }
+    .tbl-bar .sep { width: 1px; align-self: stretch; background: var(--pim-border-strong); margin: 2px 2px; }
+    .tbl-bar .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; color: #9a8a72; }
+    .tbl-bar label { font-size: 11px; color: #8a7a64; }
+    .tbl-bar .btn { --bs-btn-padding-y: 3px; --bs-btn-padding-x: 8px; --bs-btn-font-size: 12px; }
+    .tbl-bar .size-input { width: 48px; }
+    .picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; max-height: 420px; overflow-y: auto; }
+    .picker-item { border: 1px solid #e9ecef; border-radius: 6px; overflow: hidden; cursor: pointer; }
+    .picker-item:hover { border-color: var(--brand-primary); }
+    .picker-item img { width: 100%; height: 90px; object-fit: cover; display: block; }
+    .picker-item .pname { font-size: 10.5px; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="POST" action="{% if art %}{{ url_for('help.update', art_id=art.id) }}{% else %}{{ url_for('help.create') }}{% endif %}"
+      id="articleForm" class="card border-0 shadow-sm">
+    <input type="hidden" name="department" value="{{ dept.slug }}">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label-sm">Titre *</label>
+                <input type="text" name="title" class="form-control form-control-sm" required value="{{ art.title if art else '' }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label-sm">Catégorie
+                    <a href="{{ url_for('help.manage', department=dept.slug) }}" class="text-decoration-none" title="Gérer les catégories">
+                        <i class="fas fa-cog"></i></a>
+                </label>
+                {% set names = category_options | map(attribute=0) | list %}
+                {% set current_cat = art.category if art else (preselect or (names[0] if names else 'Général')) %}
+                <select name="category" class="form-select form-select-sm">
+                    {% for name, depth in category_options %}
+                    <option value="{{ name }}" {% if name == current_cat %}selected{% endif %}>
+                        {{ '– ' * depth }}{{ name }}</option>
+                    {% endfor %}
+                    {% if current_cat and current_cat not in names %}
+                    <option value="{{ current_cat }}" selected>{{ current_cat }}</option>
+                    {% endif %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label-sm">Ordre</label>
+                <input type="number" name="sort_order" class="form-control form-control-sm" value="{{ art.sort_order if art else 0 }}">
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <label class="form-label-sm">Contenu</label>
+            <div class="tbl-bar">
+                <span class="label"><i class="fas fa-table"></i> Tableau</span>
+                <label>Lignes</label>
+                <input type="number" id="tblRows" class="form-control form-control-sm size-input" value="3" min="1" max="30">
+                <label>Colonnes</label>
+                <input type="number" id="tblCols" class="form-control form-control-sm size-input" value="3" min="1" max="20">
+                <button type="button" class="btn btn-outline-secondary" data-tbl="insert"><i class="fas fa-plus"></i> Insérer</button>
+                <span class="sep"></span>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="rowAbove" title="Ligne au-dessus"><i class="fas fa-arrow-up"></i> Ligne</button>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="rowBelow" title="Ligne en-dessous"><i class="fas fa-arrow-down"></i> Ligne</button>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="delRow" title="Supprimer la ligne"><i class="fas fa-minus"></i> Ligne</button>
+                <span class="sep"></span>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="colLeft" title="Colonne à gauche"><i class="fas fa-arrow-left"></i> Col.</button>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="colRight" title="Colonne à droite"><i class="fas fa-arrow-right"></i> Col.</button>
+                <button type="button" class="btn btn-outline-secondary" data-tbl="delCol" title="Supprimer la colonne"><i class="fas fa-minus"></i> Col.</button>
+                <span class="sep"></span>
+                <button type="button" class="btn btn-outline-danger" data-tbl="delTable" title="Supprimer le tableau"><i class="fas fa-trash"></i></button>
+            </div>
+            <div id="editor"></div>
+            <input type="hidden" name="body_html" id="body_html">
+        </div>
+
+        <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="is_published" id="is_published"
+                   {% if (art and art.is_published) or not art %}checked{% endif %}>
+            <label class="form-check-label" for="is_published">Publié</label>
+        </div>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <a href="{{ url_for('help.manage', department=dept.slug) }}" class="btn btn-link text-muted">Annuler</a>
+            {% if art %}
+            <button type="submit" form="deleteForm" class="btn btn-link text-danger">
+                <i class="fas fa-trash"></i> Supprimer
+            </button>
+            {% endif %}
+        </div>
+        <button type="submit" class="btn btn-brand">Enregistrer</button>
+    </div>
+</form>
+
+{% if art %}
+<form id="deleteForm" method="POST" action="{{ url_for('help.delete', art_id=art.id) }}"
+      onsubmit="return confirm('Supprimer cet article ?');"></form>
+{% endif %}
+
+<!-- Media picker modal -->
+<div class="modal fade" id="mediaPicker" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Insérer un média</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex gap-2 mb-3">
+                    <input type="text" id="pickerSearch" class="form-control form-control-sm" placeholder="Rechercher…">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('pickerUpload').click()">
+                        <i class="fas fa-upload"></i> Téléverser
+                    </button>
+                    <input type="file" id="pickerUpload" style="display:none" onchange="pickerUploadFile(this.files)">
+                </div>
+                <div class="picker-grid" id="pickerGrid"><div class="text-muted">Chargement…</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
+<script>
+const quill = new Quill('#editor', {
+    theme: 'snow',
+    modules: {
+        table: true,
+        toolbar: {
+            container: [
+                [{ header: [2, 3, 4, false] }],
+                ['bold', 'italic', 'underline'],
+                [{ list: 'ordered' }, { list: 'bullet' }],
+                ['link', 'image'],
+                ['clean'],
+            ],
+            handlers: { image: openMediaPicker },
+        },
+    },
+});
+
+const tableModule = quill.getModule('table');
+
+{% if art %}
+quill.clipboard.dangerouslyPasteHTML({{ art.body_html | tojson }});
+// Normalise any tables that came from saved HTML so the row/column tools work.
+try { tableModule.balanceTables(); } catch (e) {}
+{% endif %}
+
+// Table mini-toolbar actions. Row/column tools need the cursor inside a cell.
+const tableActions = {
+    insert: () => {
+        const r = Math.max(1, Math.min(30, parseInt(document.getElementById('tblRows').value) || 3));
+        const c = Math.max(1, Math.min(20, parseInt(document.getElementById('tblCols').value) || 3));
+        quill.focus();
+        tableModule.insertTable(r, c);
+    },
+    rowAbove: () => tableModule.insertRowAbove(),
+    rowBelow: () => tableModule.insertRowBelow(),
+    delRow:   () => tableModule.deleteRow(),
+    colLeft:  () => tableModule.insertColumnLeft(),
+    colRight: () => tableModule.insertColumnRight(),
+    delCol:   () => tableModule.deleteColumn(),
+    delTable: () => tableModule.deleteTable(),
+};
+document.querySelectorAll('.tbl-bar [data-tbl]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const action = tableActions[btn.dataset.tbl];
+        if (!action) return;
+        try { action(); }
+        catch (e) { alert('Placez le curseur dans une cellule du tableau.'); }
+    });
+});
+
+document.getElementById('articleForm').addEventListener('submit', () => {
+    document.getElementById('body_html').value = quill.root.innerHTML;
+});
+
+const pickerModal = new bootstrap.Modal(document.getElementById('mediaPicker'));
+let lastRange = null;
+
+function openMediaPicker() {
+    lastRange = quill.getSelection(true);
+    loadPicker('');
+    pickerModal.show();
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function loadPicker(q) {
+    const grid = document.getElementById('pickerGrid');
+    grid.innerHTML = '<div class="text-muted">Chargement…</div>';
+    const resp = await fetch('/media/api/list?q=' + encodeURIComponent(q));
+    const data = await resp.json();
+    const imgs = data.assets.filter(a => a.is_image);
+    if (!imgs.length) { grid.innerHTML = '<div class="text-muted">Aucun média.</div>'; return; }
+    grid.innerHTML = imgs.map(a => `
+        <div class="picker-item" onclick="insertMedia('${a.url}')">
+            <img src="${a.url}" loading="lazy">
+            <div class="pname" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</div>
+        </div>`).join('');
+}
+
+function insertMedia(url) {
+    const range = lastRange || { index: quill.getLength() };
+    quill.insertEmbed(range.index, 'image', url, 'user');
+    quill.setSelection(range.index + 1);
+    pickerModal.hide();
+}
+
+async function pickerUploadFile(files) {
+    if (!files || !files.length) return;
+    const fd = new FormData();
+    fd.append('file', files[0]);
+    const resp = await fetch('/media/upload', { method: 'POST', body: fd });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { alert(data.error || 'Erreur'); return; }
+    if (data.assets && data.assets[0]) insertMedia(data.assets[0].url);
+}
+
+let pt = null;
+document.getElementById('pickerSearch').addEventListener('input', function () {
+    clearTimeout(pt);
+    pt = setTimeout(() => loadPicker(this.value.trim()), 180);
+});
+</script>
+{% endblock %}

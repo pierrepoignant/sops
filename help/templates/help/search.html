@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Recherche · SOP {{ brand_name }}{% endblock %}
+{% block page_title %}Recherche{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; SOP</a>{% endblock %}
+
+{% block head %}
+<style>
+    .result-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px 18px; margin-bottom: 12px; }
+    .result-card a { color: var(--pim-link); font-weight: 600; text-decoration: none; font-size: 15px; }
+    .result-card .cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--pim-text-muted); }
+    .result-card .snippet { color: var(--pim-text-secondary); font-size: 13px; margin-top: 4px; }
+    mark { background: rgba(var(--pim-primary-rgb), 0.18); padding: 0 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "help/_searchbar.html" %}
+
+<div id="browse">
+    <h6 class="text-muted mb-3">{{ results | length }} résultat(s) pour « {{ q }} »</h6>
+    {% for r in results %}
+    <div class="result-card">
+        <div class="cat">{{ r.category }}</div>
+        <a href="{{ url_for('help.article', slug=r.slug) }}">{{ r.title }}</a>
+        <div class="snippet">{{ r.snippet | safe }}</div>
+    </div>
+    {% else %}
+    <p class="text-muted">Aucun résultat. Essayez d'autres mots-clés.</p>
+    {% endfor %}
+</div>
+{% endblock %}

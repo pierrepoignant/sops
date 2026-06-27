@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Mon profil{% endblock %}
+{% block page_title %}Mon profil{% endblock %}
+
+{% block head %}
+<style>
+    .form-label { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card mb-3">
+            <div class="card-header py-2"><h6 class="card-title mb-0">Informations</h6></div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row mb-2">
+                        <div class="col-6">
+                            <label class="form-label">Prénom</label>
+                            <input type="text" name="first_name" class="form-control form-control-sm"
+                                   value="{{ current_user.first_name or '' }}" placeholder="Pierre">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">Nom</label>
+                            <input type="text" name="last_name" class="form-control form-control-sm"
+                                   value="{{ current_user.last_name or '' }}" placeholder="Dupont">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control form-control-sm" value="{{ current_user.email }}" disabled>
+                        <div class="form-text" style="font-size: 11px;">L'email est lié à votre compte Google et ne peut pas être modifié ici.</div>
+                    </div>
+                    <button type="submit" class="btn btn-sm text-white" style="background-color: var(--brand-primary);">
+                        <i class="fas fa-save"></i> Enregistrer
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header py-2"><h6 class="card-title mb-0">Compte</h6></div>
+            <div class="card-body" style="font-size: 13px;">
+                <div class="mb-2">
+                    <span class="text-muted">Identifiant :</span> {{ current_user.username }}
+                </div>
+                <div class="mb-2">
+                    <span class="text-muted">Rôle :</span> {{ current_user.role }}
+                </div>
+                <div class="mb-2">
+                    <span class="text-muted">Connexion :</span>
+                    {% if current_user.oauth_provider %}
+                    <span class="badge bg-light text-dark border"><i class="fab fa-google"></i> Google</span>
+                    {% else %}
+                    Mot de passe
+                    {% endif %}
+                </div>
+                {% if current_user.last_login %}
+                <div class="mb-2">
+                    <span class="text-muted">Dernière connexion :</span> {{ current_user.last_login.strftime('%d/%m/%Y %H:%M') }}
+                </div>
+                {% endif %}
+                <div>
+                    <span class="text-muted">Membre depuis :</span> {{ current_user.created_at.strftime('%d/%m/%Y') }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,261 @@
+/**
+ * PIM Design Tokens
+ * ---------------------------------------------------------------------------
+ * Single source of truth for the back-office UI: colors, spacing, radii,
+ * shadows and typography. Loaded globally in templates/base.html *after*
+ * Bootstrap so the Bootstrap overrides below take effect.
+ *
+ * Use these tokens (var(--pim-*)) instead of hard-coded hex/px values in
+ * templates and module CSS. See DESIGN.md for the component guide.
+ *
+ * NOTE: the green Auth/login theme and the navy NovaAroma public website are
+ * intentionally separate brands and do NOT consume these tokens.
+ * ---------------------------------------------------------------------------
+ */
+
+:root {
+    /* -- Brand -------------------------------------------------------------- */
+    /* Default (no brand selected). Per-brand overrides live at the bottom of
+       this file, keyed by <body data-brand="...">. */
+    --pim-primary:        #2563eb;   /* the main color — fills: buttons, active, focus */
+    --pim-primary-hover:  #1d4ed8;
+    --pim-primary-active: #1e40af;
+    --pim-primary-rgb:    37, 99, 235;
+    --pim-on-primary:     #ffffff;   /* text/icon ON a primary-filled surface */
+    --pim-link:           #2563eb;   /* readable-on-white variant for links/accent text */
+    --pim-link-rgb:       37, 99, 235;
+
+    /* Secondary — the brand's companion accent (logo "System", accents, tags) */
+    --pim-secondary:       #475569;
+    --pim-secondary-hover: #364152;
+    --pim-secondary-rgb:   71, 85, 105;
+    --pim-on-secondary:    #ffffff;  /* text/icon ON a secondary-filled surface */
+
+    /* -- Semantic ----------------------------------------------------------- */
+    --pim-success:        #28a745;
+    --pim-success-rgb:    40, 167, 69;
+    --pim-danger:         #dc3545;
+    --pim-danger-rgb:     220, 53, 69;
+    --pim-warning:        #ffc107;
+    --pim-warning-rgb:    255, 193, 7;
+    --pim-info:           #17a2b8;
+    --pim-info-rgb:       23, 162, 184;
+
+    /* -- Neutrals (one gray scale, replaces #333/#666/#212529/#495057/...) -- */
+    --pim-text:           #212529;   /* primary text          */
+    --pim-text-secondary: #495057;   /* labels, headers       */
+    --pim-text-muted:     #6c757d;   /* meta, captions        */
+    --pim-heading:        #2c3e50;   /* page/section titles   */
+
+    --pim-bg:             #ffffff;   /* cards, rows, surfaces */
+    --pim-bg-subtle:      #f8f9fa;   /* page background       */
+    --pim-bg-muted:       #e9ecef;   /* hovers, wells         */
+
+    --pim-border:         #dee2e6;   /* default borders       */
+    --pim-border-light:   #e9ecef;
+    --pim-border-strong:  #ced4da;   /* inputs                */
+
+    /* -- Radius ------------------------------------------------------------- */
+    --pim-radius-sm:      4px;        /* badges, small chips   */
+    --pim-radius:         8px;        /* cards, inputs, tables */
+    --pim-radius-pill:    50rem;
+
+    /* -- Shadow ------------------------------------------------------------- */
+    --pim-shadow-sm:      0 1px 3px rgba(0, 0, 0, .1);
+    --pim-shadow-md:      0 4px 8px rgba(0, 0, 0, .1);
+    --pim-shadow-lg:      0 8px 24px rgba(0, 0, 0, .12);
+
+    /* -- Typography --------------------------------------------------------- */
+    --pim-font-sans:      'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    --pim-font-mono:      'Courier New', ui-monospace, monospace;
+
+    --pim-fs-xs:          0.75rem;    /* 12px - badges, fine print */
+    --pim-fs-sm:          0.85rem;    /* 13.6px - meta, dense tables */
+    --pim-fs-base:        1rem;       /* 16px - body */
+    --pim-fs-lg:          1.25rem;    /* 20px - lead */
+    --pim-fs-h2:          1.25rem;    /* section titles */
+    --pim-fs-h1:          1.5rem;     /* 24px - page title */
+
+    --pim-fw-normal:      400;
+    --pim-fw-medium:      500;
+    --pim-fw-semibold:    600;
+    --pim-fw-bold:        700;
+
+    /* -- Spacing (4px scale) ------------------------------------------------ */
+    --pim-space-1:        4px;
+    --pim-space-2:        8px;
+    --pim-space-3:        12px;
+    --pim-space-4:        16px;
+    --pim-space-5:        20px;
+    --pim-space-6:        24px;
+    --pim-space-8:        32px;
+
+    --pim-transition:     all 0.2s ease;
+
+    /* -- Bootstrap 5.3 variable overrides ---------------------------------- */
+    /* These recolor utilities that read CSS vars: .text-primary, .bg-primary,
+       links, pagination, nav-pills, list-group active, etc. Components that
+       hard-code their color (.btn-primary, focus rings) are handled below. */
+    --bs-primary:               var(--pim-primary);
+    --bs-primary-rgb:           var(--pim-primary-rgb);
+    --bs-link-color:            var(--pim-link);
+    --bs-link-color-rgb:        var(--pim-link-rgb);
+    --bs-link-hover-color:      var(--pim-primary-hover);
+    --bs-link-hover-color-rgb:  29, 78, 216;
+    --bs-border-radius:         var(--pim-radius);
+    --bs-border-radius-sm:      var(--pim-radius-sm);
+    --bs-border-color:          var(--pim-border);
+    --bs-body-font-family:      var(--pim-font-sans);
+    --bs-body-color:            var(--pim-text);
+}
+
+/* ===========================================================================
+   Bootstrap component overrides (these hard-code their color in 5.3, so the
+   :root vars above don't reach them — set them explicitly).
+   =========================================================================== */
+
+.btn-primary {
+    --bs-btn-bg:                 var(--pim-primary);
+    --bs-btn-border-color:       var(--pim-primary);
+    --bs-btn-color:              var(--pim-on-primary);
+    --bs-btn-hover-bg:           var(--pim-primary-hover);
+    --bs-btn-hover-border-color: var(--pim-primary-hover);
+    --bs-btn-hover-color:        var(--pim-on-primary);
+    --bs-btn-active-bg:          var(--pim-primary-active);
+    --bs-btn-active-border-color:var(--pim-primary-active);
+    --bs-btn-active-color:       var(--pim-on-primary);
+    --bs-btn-disabled-bg:        var(--pim-primary);
+    --bs-btn-disabled-border-color: var(--pim-primary);
+    --bs-btn-disabled-color:     var(--pim-on-primary);
+}
+
+.btn-outline-primary {
+    --bs-btn-color:              var(--pim-link);
+    --bs-btn-border-color:       var(--pim-primary);
+    --bs-btn-hover-bg:           var(--pim-primary);
+    --bs-btn-hover-border-color: var(--pim-primary);
+    --bs-btn-hover-color:        var(--pim-on-primary);
+    --bs-btn-active-bg:          var(--pim-primary-active);
+    --bs-btn-active-border-color:var(--pim-primary-active);
+    --bs-btn-active-color:       var(--pim-on-primary);
+}
+
+.btn-link {
+    --bs-btn-color:       var(--pim-link);
+    --bs-btn-hover-color: var(--pim-primary-hover);
+}
+
+/* Focus rings — Bootstrap hard-codes the blue rgba on form controls */
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+    border-color: var(--pim-primary);
+    box-shadow: 0 0 0 0.25rem rgba(var(--pim-primary-rgb), 0.25);
+}
+
+.form-check-input:checked {
+    background-color: var(--pim-primary);
+    border-color: var(--pim-primary);
+}
+
+.btn:focus-visible,
+.btn-check:focus-visible + .btn {
+    box-shadow: 0 0 0 0.25rem rgba(var(--pim-primary-rgb), 0.25);
+}
+
+/* Standard surfaces pick up the unified radius automatically via --bs-border-radius,
+   but cards get the shared subtle shadow for consistency. */
+.card {
+    box-shadow: var(--pim-shadow-sm);
+}
+
+/* ===========================================================================
+   Per-brand theming. base.html sets <body data-brand="essenciagua|sablesienne|
+   gourmiz"> from current_brand. Each block re-declares the full set (incl. the
+   --bs-* vars, which are computed at :root and otherwise wouldn't pick up a
+   deeper --pim-primary override).
+
+   --pim-primary   : brand color, used for FILLS (buttons, active, focus ring)
+   --pim-on-primary: text/icon on those fills (white, or dark for light brands)
+   --pim-link      : readable-on-white variant for links & accent TEXT
+   =========================================================================== */
+
+/* Essenciagua — deep navy */
+body[data-brand="essenciagua"] {
+    --pim-primary:        #012B4B;
+    --pim-primary-hover:  #0a3a5e;
+    --pim-primary-active: #001b30;
+    --pim-primary-rgb:    1, 43, 75;
+    --pim-on-primary:     #ffffff;
+    --pim-link:           #012B4B;
+    --pim-link-rgb:       1, 43, 75;
+    --pim-secondary:       #61C5ED;
+    --pim-secondary-hover: #4eb6e4;
+    --pim-secondary-rgb:   97, 197, 237;
+    --pim-on-secondary:    #08384f;   /* dark — skyblue is light */
+    --bs-primary:               #012B4B;
+    --bs-primary-rgb:           1, 43, 75;
+    --bs-link-color-rgb:        1, 43, 75;
+    --bs-link-hover-color-rgb:  10, 58, 94;
+}
+
+/* Sablésienne — deep magenta */
+body[data-brand="sablesienne"] {
+    --pim-primary:        #891358;
+    --pim-primary-hover:  #a01865;
+    --pim-primary-active: #6d0f46;
+    --pim-primary-rgb:    137, 19, 88;
+    --pim-on-primary:     #ffffff;
+    --pim-link:           #891358;
+    --pim-link-rgb:       137, 19, 88;
+    --pim-secondary:       #A4845F;
+    --pim-secondary-hover: #8f6f4c;
+    --pim-secondary-rgb:   164, 132, 95;
+    --pim-on-secondary:    #3a2c1c;   /* dark — taupe is light */
+    --bs-primary:               #891358;
+    --bs-primary-rgb:           137, 19, 88;
+    --bs-link-color-rgb:        137, 19, 88;
+    --bs-link-hover-color-rgb:  160, 24, 101;
+}
+
+/* Gourmiz — lime green. Light: dark text on filled buttons, darkened green for links. */
+body[data-brand="gourmiz"] {
+    --pim-primary:        #A3C73F;
+    --pim-primary-hover:  #93b531;
+    --pim-primary-active: #84a32c;
+    --pim-primary-rgb:    163, 199, 63;
+    --pim-on-primary:     #1f2a07;   /* near-black green — readable on lime */
+    --pim-link:           #5f7d18;   /* darkened lime — readable on white */
+    --pim-link-rgb:       95, 125, 24;
+    --pim-secondary:       #452914;
+    --pim-secondary-hover: #5a3620;
+    --pim-secondary-rgb:   69, 41, 20;
+    --pim-on-secondary:    #ffffff;   /* white — brown is dark */
+    --bs-primary:               #A3C73F;
+    --bs-primary-rgb:           163, 199, 63;
+    --bs-link-color-rgb:        95, 125, 24;
+    --bs-link-hover-color-rgb:  74, 99, 17;
+}
+
+/* ===========================================================================
+   Secondary-color utilities (opt-in). Use for brand accents that are NOT the
+   neutral gray Bootstrap .btn-secondary (Cancel/Clear stay gray).
+   =========================================================================== */
+.text-pim-secondary   { color: var(--pim-secondary) !important; }
+.border-pim-secondary { border-color: var(--pim-secondary) !important; }
+.bg-pim-secondary {
+    background-color: var(--pim-secondary) !important;
+    color: var(--pim-on-secondary) !important;
+}
+
+.btn-pim-secondary {
+    --bs-btn-bg:                 var(--pim-secondary);
+    --bs-btn-border-color:       var(--pim-secondary);
+    --bs-btn-color:              var(--pim-on-secondary);
+    --bs-btn-hover-bg:           var(--pim-secondary-hover);
+    --bs-btn-hover-border-color: var(--pim-secondary-hover);
+    --bs-btn-hover-color:        var(--pim-on-secondary);
+    --bs-btn-active-bg:          var(--pim-secondary-hover);
+    --bs-btn-active-border-color:var(--pim-secondary-hover);
+    --bs-btn-active-color:       var(--pim-on-secondary);
+}

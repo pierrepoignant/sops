@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Groupes{% endblock %}
+{% block page_title %}Groupes d'utilisateurs{% endblock %}
+{% block page_subtitle %}{{ groups | length }} groupe(s){% endblock %}
+
+{% block head %}
+<style>
+    .add-card { background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 14px 16px; }
+    .data-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: #6c757d;
+                           font-weight: 600; border-bottom: 1px solid #e9ecef; padding: 10px 12px; background: #fafafa; }
+    .data-table tbody td { font-size: 13px; padding: 10px 12px; vertical-align: middle; border-bottom: 1px solid #f3f3f3; }
+    .data-table tbody tr:hover { background: #faf6f0; }
+    .btn-brand { background-color: var(--brand-primary); border-color: var(--brand-primary); color: white; }
+    .btn-brand:hover { background-color: var(--pim-primary-hover); border-color: var(--pim-primary-hover); color: white; }
+    .group-link { color: #333; text-decoration: none; font-weight: 600; }
+    .group-link:hover { color: var(--brand-primary); }
+    .module-chip { display: inline-block; background: rgba(var(--pim-primary-rgb),0.12); color: var(--brand-primary);
+                    padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px 3px 0 0; }
+    .empty-state { color: #adb5bd; padding: 48px 0; text-align: center; font-size: 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="add-card mb-3">
+    <form method="POST" action="{{ url_for('administration.groups_create') }}" class="row g-2 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small text-muted mb-1">Nom *</label>
+            <input type="text" name="name" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label small text-muted mb-1">Description</label>
+            <input type="text" name="description" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2 text-end">
+            <button type="submit" class="btn btn-sm btn-brand w-100"><i class="fas fa-plus"></i> Créer</button>
+        </div>
+    </form>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {% if groups %}
+        <div class="table-responsive">
+            <table class="table data-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Nom</th>
+                        <th>Description</th>
+                        <th>Membres</th>
+                        <th>Modules</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for g in groups %}
+                    <tr>
+                        <td><a href="{{ url_for('administration.groups_edit', group_id=g.id) }}" class="group-link">{{ g.name }}</a></td>
+                        <td class="text-muted">{{ g.description or '' }}</td>
+                        <td>{{ g.members | length }}</td>
+                        <td>
+                            {% for m in g.modules %}
+                                <span class="module-chip">{{ modules.get(m.module_id, {}).get('label', m.module_id) }}</span>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="empty-state">Aucun groupe. Créez-en un via le formulaire ci-dessus.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

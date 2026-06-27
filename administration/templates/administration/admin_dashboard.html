@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Visites - Admin{% endblock %}
+{% block page_title %}Tableau de bord des visites{% endblock %}
+
+{% block head %}
+<style>
+    .chart-container { position: relative; height: 350px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="text-muted mb-3">Visites journalieres (7 derniers jours)</h6>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="text-muted mb-3">Connexions par utilisateur (7 derniers jours)</h6>
+                <div class="chart-container">
+                    <canvas id="userChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const API_DATA = "{{ url_for('administration.admin_dashboard_data') }}";
+
+let dailyChart = null;
+let userChart = null;
+
+function loadData() {
+    fetch(API_DATA).then(r => r.json()).then(data => {
+        renderDailyChart(data);
+        renderUserChart(data);
+    });
+}
+
+function renderDailyChart(data) {
+    const ctx = document.getElementById('dailyChart');
+    if (dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.daily_labels,
+            datasets: [{
+                label: 'Visites',
+                data: data.daily_values,
+                borderColor: '#8a5a2b',
+                backgroundColor: 'rgba(138, 90, 43, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 5,
+                pointBackgroundColor: '#8a5a2b',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
+    });
+}
+
+function renderUserChart(data) {
+    const ctx = document.getElementById('userChart');
+    if (userChart) userChart.destroy();
+
+    const colors = ['#8a5a2b', '#b07a45', '#cda06f', '#e7d3ba', '#495057', '#6c757d', '#adb5bd', '#dee2e6'];
+
+    userChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.user_labels,
+            datasets: [{
+                label: 'Connexions',
+                data: data.user_values,
+                backgroundColor: data.user_labels.map((_, i) => colors[i % colors.length]),
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
+    });
+}
+
+loadData();
+</script>
+{% endblock %}

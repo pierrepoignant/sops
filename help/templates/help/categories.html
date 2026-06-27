@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Catégories · SOP{% endblock %}
+{% block page_title %}Catégories{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.manage', department=dept.slug) }}" style="color:#6c757d;text-decoration:none;">&larr; Gérer les SOP</a>{% if dept %} · {{ dept.name }}{% endif %}{% endblock %}
+
+{% block head %}
+<style>
+    .add-card { background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 14px 16px; }
+    .data-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: #6c757d;
+                           font-weight: 600; border-bottom: 1px solid #e9ecef; padding: 10px 12px; background: #fafafa; }
+    .data-table tbody td { font-size: 13px; padding: 8px 12px; vertical-align: middle; border-bottom: 1px solid #f3f3f3; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="add-card mb-3">
+    <form method="POST" action="{{ url_for('help.category_create') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="department" value="{{ dept.slug }}">
+        <div class="col-md-8">
+            <label class="form-label small text-muted mb-1">Nouvelle catégorie (L1)</label>
+            <input type="text" name="name" class="form-control form-control-sm" required placeholder="ex : Hygiène et sécurité">
+        </div>
+        <div class="col-md-4 text-end">
+            <button type="submit" class="btn btn-sm btn-brand w-100"><i class="fas fa-plus"></i> Ajouter</button>
+        </div>
+    </form>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body">
+        {% for c in categories %}
+        <div class="d-flex align-items-center gap-2 py-2" style="border-bottom:1px solid #f3f3f3;">
+            <form method="POST" action="{{ url_for('help.category_update', cat_id=c.id) }}"
+                  class="d-flex align-items-center gap-2 flex-grow-1">
+                <input type="number" name="sort_order" value="{{ c.sort_order }}"
+                       class="form-control form-control-sm" style="width:72px;" title="Ordre">
+                <input type="text" name="name" value="{{ c.name }}" class="form-control form-control-sm">
+                <span class="text-muted small" style="white-space:nowrap;">{{ counts.get(c.name, 0) }} SOP</span>
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enregistrer"><i class="fas fa-save"></i></button>
+            </form>
+            <form method="POST" action="{{ url_for('help.category_delete', cat_id=c.id) }}"
+                  onsubmit="return confirm('Supprimer cette catégorie ? Les articles seront déplacés vers « Général ».');">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+            </form>
+        </div>
+        {% else %}
+        <p class="text-center text-muted py-4 mb-0">Aucune catégorie.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

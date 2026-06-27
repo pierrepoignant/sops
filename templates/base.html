@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SOP · {{ brand_name }}{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='brand/' ~ current_brand ~ '/logo.png') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='design-tokens.css') }}">
+    <style>
+        :root {
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 60px;
+            --logo-height: 88px;
+            /* Bridge legacy template vars onto the per-brand design tokens. */
+            --brand-primary: var(--pim-primary);
+            --brand-light: var(--pim-bg-subtle);
+        }
+
+        body { font-family: var(--pim-font-sans); }
+
+        .sidebar {
+            position: fixed; top: 0; left: 0; height: 100vh;
+            width: var(--sidebar-width);
+            background: #f8f9fa; color: #333;
+            transition: all 0.3s ease;
+            z-index: 1000; overflow-y: auto; overflow-x: hidden;
+            border-right: 1px solid var(--pim-border);
+            display: flex; flex-direction: column;
+        }
+        .sidebar.collapsed { width: var(--sidebar-collapsed-width); }
+
+        .sidebar-logo {
+            height: var(--logo-height); background: white;
+            display: flex; align-items: center; justify-content: center;
+            border-bottom: 1px solid var(--pim-border); position: relative;
+            padding: 12px;
+        }
+        .brand-mark {
+            display: flex; align-items: center; gap: 12px;
+            text-decoration: none; color: var(--pim-primary); font-weight: 700;
+        }
+        .brand-mark img { height: 52px; width: auto; max-width: 150px; object-fit: contain; }
+        .brand-mark .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+        .brand-mark .brand-text .b-name { font-size: 15px; color: var(--pim-primary); }
+        .brand-mark .brand-text .b-sub { font-size: 11px; color: var(--pim-text-muted); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+        .sidebar.collapsed .brand-mark .brand-text { display: none; }
+        .sidebar.collapsed .brand-mark img { height: 34px; }
+
+        .sidebar-toggle {
+            position: absolute; top: 12px; right: 12px;
+            background: none; border: none; color: #6c757d;
+            font-size: 18px; cursor: pointer;
+            transition: all 0.3s ease; z-index: 10;
+        }
+        .sidebar-toggle:hover { color: var(--pim-primary); }
+
+        .sidebar-user { padding: 20px; border-bottom: 1px solid var(--pim-border); background: white; }
+        .sidebar.collapsed .sidebar-user { padding: 15px 0; text-align: center; }
+        .user-info { display: flex; align-items: center; gap: 10px; }
+        .user-avatar {
+            width: 40px; height: 40px; border-radius: 50%;
+            background: var(--pim-primary); display: flex;
+            align-items: center; justify-content: center;
+            color: var(--pim-on-primary); font-weight: bold; font-size: 16px; flex-shrink: 0;
+        }
+        .user-details { flex: 1; }
+        .sidebar.collapsed .user-details { display: none; }
+        .user-name { font-weight: 600; color: #333; font-size: 14px; }
+        .user-role { font-size: 12px; color: #6c757d; }
+
+        .sidebar-menu { padding: 20px 0; flex: 1; display: flex; flex-direction: column; }
+
+        .menu-section-toggle {
+            display: flex; align-items: center;
+            padding: 10px 20px; cursor: pointer;
+            color: #495057; font-size: 12px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            user-select: none; transition: all 0.2s;
+        }
+        .menu-section-toggle:hover { color: var(--pim-primary); }
+        .menu-section-toggle i.section-icon { width: 20px; margin-right: 15px; text-align: center; font-size: 14px; }
+        .menu-section-toggle .section-arrow { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
+        .menu-section-toggle.collapsed .section-arrow { transform: rotate(-90deg); }
+        .sidebar.collapsed .menu-section-toggle .menu-title,
+        .sidebar.collapsed .menu-section-toggle .section-arrow { display: none; }
+        .sidebar.collapsed .menu-section-toggle { padding: 10px 0; justify-content: center; }
+        .sidebar.collapsed .menu-section-toggle i.section-icon { margin-right: 0; }
+        .menu-sub-items { overflow: hidden; transition: max-height 0.3s ease; background: #f0f1f3; }
+        .menu-sub-items.collapsed { max-height: 0 !important; }
+        .menu-sub-items .menu-item { padding: 8px 20px 8px 55px; font-size: 13px; border-left: none; }
+        .menu-sub-items .menu-item i { font-size: 13px; width: 16px; margin-right: 10px; }
+        .menu-sub-items .menu-item:hover { background: #e4e6e9; }
+        .menu-sub-items .menu-item.active { background: rgba(var(--pim-primary-rgb), 0.10); }
+
+        .menu-item {
+            display: flex; align-items: center;
+            padding: 12px 20px; color: #495057;
+            text-decoration: none; transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+        .menu-item:hover { background: #e9ecef; color: #212529; border-left-color: var(--pim-primary); text-decoration: none; }
+        .menu-item.active { background: rgba(var(--pim-primary-rgb), 0.10); color: var(--pim-primary); border-left-color: var(--pim-primary); }
+        .menu-item i { width: 20px; margin-right: 15px; text-align: center; font-size: 16px; }
+        .menu-item .menu-title { flex: 1; white-space: nowrap; overflow: hidden; }
+        .sidebar.collapsed .menu-item .menu-title { display: none; }
+        .sidebar.collapsed .menu-item { padding: 12px 0; justify-content: center; }
+        .sidebar.collapsed .menu-item i { margin-right: 0; }
+        .sidebar.collapsed .menu-sub-items .menu-item { padding: 10px 0; }
+        .sidebar.collapsed .menu-sub-items { background: transparent; }
+
+        .main-content {
+            margin-left: var(--sidebar-width);
+            transition: margin-left 0.3s ease;
+            min-height: 100vh;
+            display: flex; flex-direction: column;
+        }
+        .main-content.sidebar-collapsed { margin-left: var(--sidebar-collapsed-width); }
+
+        .page-title {
+            background: white; padding: 20px 30px;
+            border-bottom: 1px solid var(--pim-border-light);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .page-title h1 {
+            margin: 0; font-size: 24px; font-weight: 600;
+            color: var(--pim-heading); flex: 1;
+        }
+        .page-buttons-container {
+            display: flex; gap: 0.5rem;
+            justify-content: flex-end; flex-wrap: wrap;
+        }
+        .content-area { flex: 1; padding: 30px; background: var(--pim-bg-subtle); }
+
+        /* Brand-colored action button (replaces hard-coded browns). */
+        .btn-brand {
+            background-color: var(--pim-primary); border-color: var(--pim-primary);
+            color: var(--pim-on-primary);
+        }
+        .btn-brand:hover {
+            background-color: var(--pim-primary-hover); border-color: var(--pim-primary-hover);
+            color: var(--pim-on-primary);
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); z-index: 1100; }
+            .sidebar.mobile-open { transform: translateX(0); }
+            .main-content { margin-left: 0 !important; }
+            .mobile-overlay {
+                display: none; position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.5); z-index: 999;
+            }
+            .mobile-overlay.show { display: block; }
+            .mobile-menu-btn {
+                position: fixed; top: 8px; left: 8px;
+                z-index: 1200; background: var(--pim-primary);
+                color: var(--pim-on-primary); border: none;
+                padding: 6px 8px; border-radius: 6px;
+                font-size: 14px; cursor: pointer; display: block;
+            }
+            .sidebar-toggle { display: none; }
+            .content-area { padding: 15px; }
+            .page-title { padding: 8px 10px 8px 45px; }
+            .page-title h1 { font-size: 0.9rem; }
+        }
+        @media (min-width: 769px) {
+            .mobile-menu-btn { display: none !important; }
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body data-brand="{{ current_brand }}">
+    <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleMobileSidebar()">
+        <i class="fas fa-bars"></i>
+    </button>
+    <div class="mobile-overlay" id="mobileOverlay" onclick="toggleMobileSidebar()"></div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <a href="{{ url_for('home') }}" class="brand-mark">
+                <img src="{{ brand_logo }}" alt="{{ brand_name }}">
+                <span class="brand-text">
+                    <span class="b-name">{{ brand_name }}</span>
+                    <span class="b-sub">SOP</span>
+                </span>
+            </a>
+            <button class="sidebar-toggle" onclick="toggleSidebar()">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+
+        <div class="sidebar-user">
+            {% if current_user.is_authenticated %}
+                <a href="{{ url_for('auth.profile') }}" class="user-info" style="text-decoration: none; color: inherit;">
+                    <div class="user-avatar">{{ (current_user.first_name or current_user.username)[0].upper() }}</div>
+                    <div class="user-details">
+                        <div class="user-name">{{ current_user.display_name }}</div>
+                        <div class="user-role">{{ current_user.email }}</div>
+                    </div>
+                </a>
+            {% else %}
+                <a href="{{ url_for('auth.login') }}" class="btn btn-sm btn-outline-secondary w-100">
+                    <i class="fas fa-sign-in-alt"></i> Connexion
+                </a>
+            {% endif %}
+        </div>
+
+        <div class="sidebar-menu">
+            {% if current_user.is_authenticated %}
+            <a href="{{ url_for('help.index') }}" class="menu-item {% if request.blueprint == 'help' and not (request.endpoint or '').startswith('help.manage') and not (request.endpoint or '').startswith('help.departments') and not (request.endpoint or '').startswith('help.categories') %}active{% endif %}">
+                <i class="fas fa-book-open"></i>
+                <span class="menu-title">SOP</span>
+            </a>
+            {% endif %}
+
+            {% if has_module('administration') or has_module('media') %}
+            {% set admin_endpoints = ('administration.admin_users', 'administration.admin_dashboard',
+                                       'administration.groups_list', 'administration.groups_edit') %}
+            {% set admin_active = request.endpoint in admin_endpoints or request.blueprint == 'media' or (request.endpoint and (request.endpoint.startswith('help.manage') or request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories'))) %}
+            <div class="menu-section-toggle {% if not admin_active %}collapsed{% endif %}" onclick="toggleMenuSection(this)">
+                <i class="fas fa-shield-alt section-icon"></i>
+                <span class="menu-title">Administration</span>
+                <i class="fas fa-chevron-down section-arrow"></i>
+            </div>
+            <div class="menu-sub-items {% if not admin_active %}collapsed{% endif %}" style="max-height: 420px;">
+                {% if current_user.is_admin %}
+                <a href="{{ url_for('help.manage') }}" class="menu-item {% if request.endpoint and request.endpoint.startswith('help.manage') %}active{% endif %}">
+                    <i class="fas fa-book"></i>
+                    <span class="menu-title">Gérer les SOP</span>
+                </a>
+                <a href="{{ url_for('help.departments_manage') }}" class="menu-item {% if request.endpoint and (request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories')) %}active{% endif %}">
+                    <i class="fas fa-sitemap"></i>
+                    <span class="menu-title">Départements</span>
+                </a>
+                {% endif %}
+                {% if has_module('media') %}
+                <a href="{{ url_for('media.index') }}" class="menu-item {% if request.blueprint == 'media' %}active{% endif %}">
+                    <i class="fas fa-photo-video"></i>
+                    <span class="menu-title">Médias</span>
+                </a>
+                {% endif %}
+                {% if has_module('administration') %}
+                <a href="{{ url_for('administration.admin_users') }}" class="menu-item {% if request.endpoint == 'administration.admin_users' %}active{% endif %}">
+                    <i class="fas fa-users-cog"></i>
+                    <span class="menu-title">Utilisateurs</span>
+                </a>
+                <a href="{{ url_for('administration.groups_list') }}" class="menu-item {% if request.endpoint in ('administration.groups_list', 'administration.groups_edit') %}active{% endif %}">
+                    <i class="fas fa-user-shield"></i>
+                    <span class="menu-title">Groupes</span>
+                </a>
+                <a href="{{ url_for('administration.admin_dashboard') }}" class="menu-item {% if request.endpoint == 'administration.admin_dashboard' %}active{% endif %}">
+                    <i class="fas fa-chart-bar"></i>
+                    <span class="menu-title">Visites</span>
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if current_user.is_authenticated %}
+            <div style="padding: 20px 20px 0; margin-top: auto;">
+                <a href="{{ url_for('auth.logout') }}" class="menu-item" style="color: #dc3545;">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span class="menu-title">Déconnexion</span>
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="main-content" id="mainContent">
+        <div class="page-title">
+            <div>
+                <h1>{% block page_title %}Tableau de bord{% endblock %}</h1>
+                {% if self.page_subtitle() %}
+                    <p class="text-muted mb-0" style="font-size: 14px;">{% block page_subtitle %}{% endblock %}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if self.page_buttons() %}
+        <div class="px-3 py-2">
+            <div class="page-buttons-container">
+                {% block page_buttons %}{% endblock %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="content-area">
+            <div id="flash-messages-container">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            {% set alert_class = {
+                                'success': 'success', 'error': 'danger',
+                                'warning': 'warning', 'info': 'info'
+                            }.get(category, 'secondary') %}
+                            <div class="alert alert-{{ alert_class }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+            </div>
+
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        }
+
+        function toggleMobileSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('mobileOverlay');
+            const btn = document.getElementById('mobileMenuBtn');
+            sidebar.classList.toggle('mobile-open');
+            overlay.classList.toggle('show');
+            btn.classList.toggle('active');
+        }
+
+        function toggleMenuSection(el) {
+            el.classList.toggle('collapsed');
+            el.nextElementSibling.classList.toggle('collapsed');
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                document.getElementById('sidebar').classList.add('collapsed');
+                document.getElementById('mainContent').classList.add('sidebar-collapsed');
+            }
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block title %}Utilisateurs - Admin{% endblock %}
+{% block page_title %}Utilisateurs{% endblock %}
+
+{% block page_buttons %}
+<button type="button" class="btn btn-sm btn-brand" onclick="openCreateUserModal()">
+    <i class="fas fa-user-plus"></i> Ajouter un utilisateur
+</button>
+{% endblock %}
+
+{% block head %}
+<style>
+    .users-table { width: 100%; border-collapse: collapse; }
+    .users-table th { background: #f8f9fa; font-weight: 600; font-size: 12px; text-transform: uppercase;
+                      letter-spacing: 0.4px; color: #6c757d; padding: 10px 12px;
+                      border-bottom: 1px solid #e9ecef; text-align: left; white-space: nowrap; }
+    .users-table td { padding: 10px 12px; border-bottom: 1px solid #f3f3f3; font-size: 13px; vertical-align: middle; }
+    .users-table tr:hover { background: #faf6f0; }
+    .role-select { font-size: 12px; padding: 3px 22px 3px 8px; border: 1px solid #dee2e6; border-radius: 4px; background: white; }
+    .role-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 10px;
+        font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .role-badge.admin { background: #fdecef; color: #b02a37; }
+    .role-badge.staff { background: #e7f0fd; color: #1a56c4; }
+    .status-chip {
+        display: inline-block; padding: 2px 8px; border-radius: 10px;
+        font-size: 11px; font-weight: 500;
+    }
+    .status-chip.pending { background: #fff4e5; color: #9a6400; }
+    .status-chip.active { background: #e6f4ea; color: #1e7b3c; }
+    .btn-brand { background-color: var(--brand-primary); border-color: var(--brand-primary); color: white; }
+    .btn-brand:hover { background-color: var(--pim-primary-hover); border-color: var(--pim-primary-hover); color: white; }
+    .form-label-sm { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+                      color: #6c757d; margin-bottom: 6px; display: block; }
+    .btn-icon { background: none; border: none; color: #adb5bd; cursor: pointer; padding: 4px 6px; }
+    .btn-icon:hover { color: #dc3545; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="users-table" id="usersTable">
+                <thead>
+                    <tr>
+                        <th>Nom</th>
+                        <th>Email</th>
+                        <th style="width: 130px;">Rôle</th>
+                        <th>Statut</th>
+                        <th>Dernière connexion</th>
+                        <th>Créé le</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="usersBody">
+                    <tr><td colspan="7" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> Chargement...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Create user modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form id="createUserForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">Ajouter un utilisateur</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label-sm">Email *</label>
+                        <input type="email" name="email" class="form-control form-control-sm" required
+                               placeholder="prenom.nom@sablesienne.com">
+                        <div class="form-text" style="font-size: 11px;">
+                            Le compte est pré-créé. L'utilisateur pourra se connecter via Google avec cet email.
+                        </div>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label-sm">Prénom</label>
+                            <input type="text" name="first_name" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label-sm">Nom</label>
+                            <input type="text" name="last_name" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label-sm">Rôle *</label>
+                        <select name="role" class="form-select form-select-sm" required>
+                            <option value="staff" selected>Staff</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div id="createUserError" class="alert alert-danger py-2 px-3 mt-3 mb-0" style="display:none; font-size:13px;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-link text-muted" data-bs-dismiss="modal">Annuler</button>
+                    <button type="submit" class="btn btn-sm btn-brand">
+                        <i class="fas fa-user-plus"></i> Créer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const API_DATA = "{{ url_for('administration.admin_users_data') }}";
+const CURRENT_USER_ID = {{ current_user.id }};
+
+const createUserModalEl = document.getElementById('createUserModal');
+const createUserModal = new bootstrap.Modal(createUserModalEl);
+const createUserForm = document.getElementById('createUserForm');
+
+function openCreateUserModal() {
+    createUserForm.reset();
+    document.getElementById('createUserError').style.display = 'none';
+    createUserModal.show();
+}
+
+createUserForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(createUserForm);
+    const payload = {
+        email: fd.get('email'),
+        first_name: fd.get('first_name'),
+        last_name: fd.get('last_name'),
+        role: fd.get('role'),
+    };
+    const errBox = document.getElementById('createUserError');
+    errBox.style.display = 'none';
+    try {
+        const resp = await fetch('/administration/users/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        createUserModal.hide();
+        loadUsers();
+    } catch (err) {
+        errBox.textContent = err.message;
+        errBox.style.display = '';
+    }
+});
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function loadUsers() {
+    fetch(API_DATA).then(r => r.json()).then(data => {
+        const body = document.getElementById('usersBody');
+        if (!data.users || !data.users.length) {
+            body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucun utilisateur.</td></tr>';
+            return;
+        }
+        body.innerHTML = data.users.map(u => {
+            const isSelf = u.id === CURRENT_USER_ID;
+            const roleControl = isSelf
+                ? `<span class="role-badge ${u.role}">${u.role}</span>`
+                : `<select class="role-select" onchange="setRole(${u.id}, this)">
+                       <option value="staff" ${u.role==='staff'?'selected':''}>Staff</option>
+                       <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+                   </select>`;
+            const pending = u.last_login === '-';
+            const statusChip = pending
+                ? '<span class="status-chip pending">En attente</span>'
+                : '<span class="status-chip active">Actif</span>';
+            const deleteBtn = isSelf
+                ? ''
+                : `<button class="btn-icon" title="Supprimer" onclick="deleteUser(${u.id}, '${escapeHtml(u.email)}')">
+                       <i class="fas fa-trash-alt"></i>
+                   </button>`;
+            return `
+            <tr>
+                <td><strong>${escapeHtml(u.display_name)}</strong></td>
+                <td>${escapeHtml(u.email)}</td>
+                <td>${roleControl}</td>
+                <td>${statusChip}</td>
+                <td>${u.last_login}</td>
+                <td>${u.created_at}</td>
+                <td class="text-end">${deleteBtn}</td>
+            </tr>`;
+        }).join('');
+    });
+}
+
+async function setRole(userId, selectEl) {
+    const role = selectEl.value;
+    const previous = selectEl.dataset.previous || role;
+    const resp = await fetch(`/administration/users/${userId}/set-role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Erreur');
+        selectEl.value = previous;
+        return;
+    }
+    selectEl.dataset.previous = role;
+}
+
+async function deleteUser(userId, email) {
+    if (!confirm(`Supprimer l'utilisateur ${email} ?`)) return;
+    const resp = await fetch(`/administration/users/${userId}/delete`, { method: 'POST' });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Erreur');
+        return;
+    }
+    loadUsers();
+}
+
+loadUsers();
+</script>
+{% endblock %}

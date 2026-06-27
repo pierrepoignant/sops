@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}{{ dept.name }} · SOP {{ brand_name }}{% endblock %}
+{% block page_title %}{{ dept.name }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; Départements</a> · SOP {{ brand_name }}{% endblock %}
+
+{% block page_buttons %}
+{% if current_user.is_admin %}
+<a href="{{ url_for('help.manage', department=dept.slug) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-cog"></i> Gérer</a>
+<a href="{{ url_for('help.new', department=dept.slug) }}" class="btn btn-sm btn-brand"><i class="fas fa-plus"></i> Nouveau SOP</a>
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+    .cat-card { background: white; border: 1px solid var(--pim-border); border-radius: 12px; padding: 18px 20px; height: 100%; }
+    .cat-card h3 { font-size: 15px; font-weight: 700; color: var(--pim-primary); margin-bottom: 12px; }
+    .subcat-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+                    color: var(--pim-text-muted); margin: 14px 0 4px; }
+    .art-link { display: block; padding: 6px 0; color: var(--pim-text); text-decoration: none; font-size: 14px; border-bottom: 1px solid var(--pim-border-light); }
+    .art-link:last-child { border-bottom: none; }
+    .art-link:hover { color: var(--pim-primary); }
+    .art-link i { font-size: 11px; margin-right: 8px; color: var(--pim-text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "help/_searchbar.html" %}
+
+<div id="browse">
+    {% macro art_links(arts) %}
+        {% for a in arts %}
+        <a href="{{ url_for('help.article', slug=a.slug) }}" class="art-link">
+            <i class="fas fa-file-alt"></i>{{ a.title }}
+        </a>
+        {% endfor %}
+    {% endmacro %}
+    <div class="row g-3">
+        {% for n in tree %}
+        <div class="col-12 col-lg-6">
+            <div class="cat-card">
+                <h3>{{ n.name }}</h3>
+                {{ art_links(n.articles) }}
+                {% for c in n.children %}
+                <div class="subcat-title">{{ c.name }}</div>
+                {{ art_links(c.articles) }}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        {% for o in orphans %}
+        <div class="col-12 col-lg-6">
+            <div class="cat-card">
+                <h3>{{ o.name }}</h3>
+                {{ art_links(o.articles) }}
+            </div>
+        </div>
+        {% endfor %}
+        {% if not tree and not orphans %}
+        <div class="col-12"><p class="text-muted">Aucun SOP dans ce département pour l'instant.</p></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

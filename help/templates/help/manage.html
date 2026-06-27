@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+
+{% block title %}Gérer les SOP{% endblock %}
+{% block page_title %}Gérer les SOP{% endblock %}
+{% block page_subtitle %}{% if dept %}{{ dept.name }} · {% endif %}{{ total }} SOP · glissez-déposez pour réorganiser{% endblock %}
+
+{% block page_buttons %}
+{% if departments %}
+<div class="dropdown d-inline-block">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="fas fa-sitemap"></i> {{ dept.name if dept else 'Département' }}
+    </button>
+    <ul class="dropdown-menu">
+        {% for d in departments %}
+        <li><a class="dropdown-item {% if dept and d.id == dept.id %}active{% endif %}" href="{{ url_for('help.manage', department=d.slug) }}">{{ d.name }}</a></li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+<a href="{{ url_for('help.index') }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-book-open"></i> Voir les SOP</a>
+{% if dept %}<a href="{{ url_for('help.new', department=dept.slug) }}" class="btn btn-sm btn-brand"><i class="fas fa-plus"></i> Nouveau SOP</a>{% endif %}
+{% endblock %}
+
+{% block head %}
+<link href="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.css" rel="stylesheet" onerror="this.remove()">
+<style>
+    .cms { max-width: 900px; }
+    .cms ul { list-style: none; padding: 0; margin: 0; }
+
+    /* Category cards */
+    .cat-item { background: #fff; border: 1px solid var(--pim-border); border-radius: 10px; margin-bottom: 12px; }
+    .cat-item.l2 { border-color: var(--pim-border-light); border-radius: 8px; margin: 8px 0; background: var(--pim-bg); }
+    .cat-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; }
+    .cat-item.l2 .cat-head { padding: 9px 12px; }
+    .cat-name { font-weight: 700; color: var(--brand-primary); font-size: 15px; outline: none;
+                border-radius: 5px; padding: 2px 6px; min-width: 40px; }
+    .cat-item.l2 .cat-name { font-size: 13.5px; color: var(--pim-primary-hover); font-weight: 600; }
+    .cat-name:focus { background: #f7f1ea; box-shadow: 0 0 0 2px #e7d4bd; }
+    .cat-count { font-size: 11px; color: #b09a7c; white-space: nowrap; }
+    .cat-tools { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+    .cat-item:hover > .cat-head > .cat-tools { opacity: 1; }
+    .cat-tools .btn { --bs-btn-padding-y: 2px; --bs-btn-padding-x: 7px; --bs-btn-font-size: 11px; }
+
+    .cat-body { padding: 0 14px 12px 34px; }
+    .cat-item.l2 .cat-body { padding: 0 12px 10px 30px; }
+    .subcat-list { margin-top: 2px; }
+
+    /* Drag handles */
+    .handle { cursor: grab; color: #cbb89c; padding: 2px 4px; font-size: 13px; }
+    .handle:active { cursor: grabbing; }
+
+    /* Article rows */
+    .article-list { min-height: 14px; border-radius: 7px; }
+    .article-list.empty { border: 1px dashed #e3d6c3; }
+    .article-list.empty::after { content: attr(data-empty); display: block; color: #c2b298;
+                                 font-size: 12px; font-style: italic; padding: 8px 12px; }
+    .art-item { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #f0e9df;
+                border-radius: 7px; padding: 7px 10px; margin: 6px 0; font-size: 13px; }
+    .art-item:hover { border-color: #e0cfb6; background: var(--pim-bg); }
+    .art-title { color: #43321f; text-decoration: none; font-weight: 600; flex: 1; min-width: 0;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .art-title:hover { color: var(--brand-primary); }
+    .art-actions { display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+    .art-item:hover .art-actions { opacity: 1; }
+    .art-actions .btn { --bs-btn-padding-y: 1px; --bs-btn-padding-x: 6px; --bs-btn-font-size: 11px; }
+    form.inline { display: inline; margin: 0; }
+
+    /* SortableJS feedback */
+    .sortable-ghost { opacity: .45; }
+    .sortable-drag { opacity: .95; }
+    /* While dragging a sub-category, reveal a drop zone in every L1 (even empty). */
+    body.drag-sub .subcat-list { min-height: 30px; border: 1px dashed #d9c2a3; border-radius: 7px; margin-bottom: 4px; }
+    /* While dragging an article, light up category drop targets. */
+    body.drag-art .article-list { min-height: 26px; }
+    body.drag-art .article-list.empty { border-color: #cdb491; background: #fbf6ee; }
+
+    .add-row { display: flex; gap: 8px; align-items: center; }
+    .save-pill { position: fixed; bottom: 20px; right: 20px; z-index: 1080; background: #2f7d4f; color: #fff;
+                 padding: 8px 16px; border-radius: 20px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+                 opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; pointer-events: none; }
+    .save-pill.show { opacity: 1; transform: translateY(0); }
+    .save-pill.err { background: #b3261e; }
+    .subcat-list:empty { min-height: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% macro article_row(a) %}
+<li class="art-item" data-art-id="{{ a.id }}">
+    <span class="handle art-handle" title="Déplacer"><i class="fas fa-grip-vertical"></i></span>
+    <a class="art-title" href="{{ url_for('help.article', slug=a.slug) }}">{{ a.title }}</a>
+    {% if a.is_published %}<span class="badge bg-success-subtle text-success">Publié</span>
+    {% else %}<span class="badge bg-secondary-subtle text-secondary">Brouillon</span>{% endif %}
+    <span class="art-actions">
+        <a href="{{ url_for('help.edit', art_id=a.id) }}" class="btn btn-outline-secondary" title="Modifier"><i class="fas fa-edit"></i></a>
+        <form class="inline" method="POST" action="{{ url_for('help.delete', art_id=a.id) }}"
+              onsubmit="return confirm('Supprimer cet article ?');">
+            <button class="btn btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+        </form>
+    </span>
+</li>
+{% endmacro %}
+
+{% macro article_list(node) %}
+<ul class="article-list" data-cat-id="{{ node.cat.id }}" data-empty="Déposez des articles ici">
+    {% for a in node.articles %}{{ article_row(a) }}{% endfor %}
+</ul>
+{% endmacro %}
+
+{% if not dept %}
+<div class="text-center text-muted py-5">
+    <i class="fas fa-sitemap fa-2x mb-3 d-block" style="opacity:.4;"></i>
+    Aucun département. Créez-en un pour commencer.
+    <div class="mt-3"><a href="{{ url_for('help.departments_manage') }}" class="btn btn-sm btn-brand">Gérer les départements</a></div>
+</div>
+{% else %}
+<div class="cms">
+    <ul id="l1-list">
+        {% for n in tree %}
+        <li class="cat-item l1" data-cat-id="{{ n.cat.id }}">
+            <div class="cat-head">
+                <span class="handle l1-handle" title="Déplacer la catégorie"><i class="fas fa-grip-vertical"></i></span>
+                <span class="cat-name" contenteditable="true" spellcheck="false"
+                      data-cat-id="{{ n.cat.id }}" data-orig="{{ n.cat.name }}">{{ n.cat.name }}</span>
+                <span class="cat-count">{{ n.articles | length }} article(s)</span>
+                <span class="cat-tools">
+                    <button type="button" class="btn btn-outline-secondary js-add-sub" data-parent="{{ n.cat.id }}">
+                        <i class="fas fa-folder-plus"></i> Sous-catégorie</button>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('help.new', department=dept.slug, category=n.cat.name) }}" title="Nouveau SOP ici">
+                        <i class="fas fa-plus"></i></a>
+                    <form class="inline" method="POST" action="{{ url_for('help.category_delete', cat_id=n.cat.id) }}"
+                          onsubmit="return confirm('Supprimer la catégorie « {{ n.cat.name }} » ? Les articles seront déplacés vers « Général » et les sous-catégories remontées.');">
+                        <button class="btn btn-outline-danger" title="Supprimer la catégorie"><i class="fas fa-trash"></i></button>
+                    </form>
+                </span>
+            </div>
+            <div class="cat-body">
+                <ul class="subcat-list" data-parent-id="{{ n.cat.id }}">
+                    {% for c in n.children %}
+                    <li class="cat-item l2" data-cat-id="{{ c.cat.id }}">
+                        <div class="cat-head">
+                            <span class="handle l2-handle" title="Déplacer la sous-catégorie"><i class="fas fa-grip-vertical"></i></span>
+                            <span class="cat-name" contenteditable="true" spellcheck="false"
+                                  data-cat-id="{{ c.cat.id }}" data-orig="{{ c.cat.name }}">{{ c.cat.name }}</span>
+                            <span class="cat-count">{{ c.articles | length }} article(s)</span>
+                            <span class="cat-tools">
+                                <a class="btn btn-outline-secondary" href="{{ url_for('help.new', department=dept.slug, category=c.cat.name) }}" title="Nouveau SOP ici">
+                                    <i class="fas fa-plus"></i></a>
+                                <form class="inline" method="POST" action="{{ url_for('help.category_delete', cat_id=c.cat.id) }}"
+                                      onsubmit="return confirm('Supprimer la sous-catégorie « {{ c.cat.name }} » ? Les articles seront déplacés vers « Général ».');">
+                                    <button class="btn btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+                                </form>
+                            </span>
+                        </div>
+                        <div class="cat-body">{{ article_list(c) }}</div>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {{ article_list(n) }}
+                <form class="add-row js-add-sub-form mt-2 d-none" method="POST" action="{{ url_for('help.category_create') }}">
+                    <input type="hidden" name="department" value="{{ dept.slug }}">
+                    <input type="hidden" name="parent_id" value="{{ n.cat.id }}">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Nom de la sous-catégorie" style="max-width:300px;">
+                    <button class="btn btn-sm btn-brand" type="submit"><i class="fas fa-check"></i></button>
+                    <button class="btn btn-sm btn-link text-muted js-cancel-sub" type="button">Annuler</button>
+                </form>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+
+    {% if orphans %}
+    <div class="cat-item l1" style="border-style:dashed;">
+        <div class="cat-head">
+            <span class="cat-name" contenteditable="false" style="color:#a08a6c;cursor:default;"><i class="fas fa-inbox"></i> Non classé</span>
+            <span class="cat-count">à ranger</span>
+        </div>
+        <div class="cat-body">
+            <div class="small text-muted mb-1">Articles dont la catégorie n'existe plus — glissez-les dans une catégorie.</div>
+            <ul class="article-list" data-cat-id="" data-empty="">
+                {% for o in orphans %}{% for a in o.articles %}{{ article_row(a) }}{% endfor %}{% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="mt-3">
+        <form class="add-row" method="POST" action="{{ url_for('help.category_create') }}">
+            <input type="hidden" name="department" value="{{ dept.slug }}">
+            <input type="text" name="name" class="form-control form-control-sm" required
+                   placeholder="Nouvelle catégorie (L1)" style="max-width:340px;">
+            <button class="btn btn-sm btn-brand" type="submit"><i class="fas fa-plus"></i> Ajouter une catégorie</button>
+        </form>
+    </div>
+</div>
+
+<div id="savePill" class="save-pill"><i class="fas fa-check"></i> Enregistré</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script>
+const REORDER_URL = "{{ url_for('help.reorder') }}";
+const CAT_UPDATE_URL = id => `/help/categories/${id}/update`;
+
+const pill = document.getElementById('savePill');
+let pillTimer = null;
+function showPill(ok, msg) {
+    pill.className = 'save-pill show' + (ok ? '' : ' err');
+    pill.innerHTML = ok ? '<i class="fas fa-check"></i> ' + (msg || 'Enregistré')
+                        : '<i class="fas fa-exclamation-triangle"></i> ' + (msg || 'Erreur');
+    clearTimeout(pillTimer);
+    pillTimer = setTimeout(() => pill.classList.remove('show'), 1800);
+}
+
+// ---- Serialize the whole tree and persist ----
+function collectArticles(listEl, catId, articles) {
+    if (catId === '' || catId == null) return;  // leave orphans untouched
+    listEl.querySelectorAll(':scope > li.art-item').forEach((li, k) => {
+        articles.push({ id: +li.dataset.artId, category_id: catId, sort_order: k });
+    });
+}
+
+function serialize() {
+    const categories = [], articles = [];
+    document.querySelectorAll('#l1-list > li.cat-item').forEach((l1, i) => {
+        const cid = +l1.dataset.catId;
+        categories.push({ id: cid, parent_id: null, sort_order: i });
+        const sub = l1.querySelector(':scope > .cat-body > ul.subcat-list');
+        if (sub) sub.querySelectorAll(':scope > li.cat-item').forEach((l2, j) => {
+            const c2 = +l2.dataset.catId;
+            categories.push({ id: c2, parent_id: cid, sort_order: j });
+            const al2 = l2.querySelector(':scope > .cat-body > ul.article-list');
+            if (al2) collectArticles(al2, c2, articles);
+        });
+        const al1 = l1.querySelector(':scope > .cat-body > ul.article-list');
+        if (al1) collectArticles(al1, cid, articles);
+    });
+    return { categories, articles };
+}
+
+let saveTimer = null;
+function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 350);
+}
+async function save() {
+    try {
+        const resp = await fetch(REORDER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            body: JSON.stringify(serialize()),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) { showPill(true); refreshCounts(); }
+        else showPill(false, data.error);
+    } catch (e) { showPill(false, 'Réseau'); }
+}
+
+function refreshCounts() {
+    document.querySelectorAll('.cat-item').forEach(ci => {
+        const list = ci.querySelector(':scope > .cat-body > ul.article-list');
+        const cnt = list ? list.querySelectorAll(':scope > li.art-item').length : 0;
+        const badge = ci.querySelector(':scope > .cat-head > .cat-count');
+        if (badge && badge.textContent.includes('article')) badge.textContent = cnt + ' article(s)';
+    });
+    document.querySelectorAll('.article-list').forEach(markEmpty);
+}
+
+function markEmpty(list) {
+    if (list.dataset.catId === '') return;
+    const has = list.querySelector(':scope > li.art-item');
+    list.classList.toggle('empty', !has);
+}
+
+// ---- Wire up SortableJS ----
+function makeSortable(el, type, opts) {
+    if (!window.Sortable || !el) return;
+    new Sortable(el, Object.assign({
+        animation: 150,
+        onStart: () => document.body.classList.add('drag-' + type),
+        onEnd:   () => { document.body.classList.remove('drag-' + type); scheduleSave(); },
+    }, opts));
+}
+
+// L1 categories
+makeSortable(document.getElementById('l1-list'), 'l1', { handle: '.l1-handle', draggable: 'li.cat-item' });
+// L2 categories — shared group so they can move between L1s
+document.querySelectorAll('ul.subcat-list').forEach(el =>
+    makeSortable(el, 'sub', { group: 'subcats', handle: '.l2-handle', draggable: 'li.cat-item' }));
+// Articles — shared group across every category list
+document.querySelectorAll('ul.article-list').forEach(el =>
+    makeSortable(el, 'art', { group: 'articles', handle: '.art-handle', draggable: 'li.art-item',
+                              onAdd: markAll, onRemove: markAll }));
+function markAll() { document.querySelectorAll('.article-list').forEach(markEmpty); }
+document.querySelectorAll('.article-list').forEach(markEmpty);
+
+// ---- Inline category rename ----
+document.querySelectorAll('.cat-name[contenteditable="true"]').forEach(span => {
+    span.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); span.blur(); }
+        if (e.key === 'Escape') { span.textContent = span.dataset.orig; span.blur(); }
+    });
+    span.addEventListener('blur', async () => {
+        const name = span.textContent.trim().replace(/\s+/g, ' ');
+        if (!name) { span.textContent = span.dataset.orig; return; }
+        if (name === span.dataset.orig) { span.textContent = name; return; }
+        try {
+            const resp = await fetch(CAT_UPDATE_URL(span.dataset.catId), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ name }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data.ok) { span.dataset.orig = data.name; span.textContent = data.name; showPill(true); }
+            else { span.textContent = span.dataset.orig; showPill(false, data.error); }
+        } catch (e) { span.textContent = span.dataset.orig; showPill(false, 'Réseau'); }
+    });
+});
+
+// ---- Add sub-category reveal ----
+document.querySelectorAll('.js-add-sub').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const body = btn.closest('.cat-item').querySelector(':scope > .cat-body');
+        const form = body.querySelector('.js-add-sub-form');
+        form.classList.toggle('d-none');
+        if (!form.classList.contains('d-none')) form.querySelector('input[name=name]').focus();
+    });
+});
+document.querySelectorAll('.js-cancel-sub').forEach(btn =>
+    btn.addEventListener('click', () => btn.closest('form').classList.add('d-none')));
+</script>
+{% endblock %}

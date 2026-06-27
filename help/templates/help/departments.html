@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Départements · SOP{% endblock %}
+{% block page_title %}Départements{% endblock %}
+{% block page_subtitle %}Organisation de premier niveau des SOP {{ brand_name }}{% endblock %}
+
+{% block page_buttons %}
+<a href="{{ url_for('help.index') }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-book-open"></i> Voir les SOP</a>
+{% endblock %}
+
+{% block head %}
+<style>
+    .add-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 16px 18px; }
+    .dept-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pim-border-light); }
+    .dept-ico-sm { width: 38px; height: 38px; border-radius: 9px; display:inline-flex; align-items:center; justify-content:center;
+                   background: rgba(var(--pim-primary-rgb), 0.12); color: var(--pim-primary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="add-card mb-3" style="max-width:720px;">
+    <form method="POST" action="{{ url_for('help.department_create') }}" class="row g-2 align-items-end">
+        <div class="col-md-7">
+            <label class="form-label small text-muted mb-1">Nouveau département</label>
+            <input type="text" name="name" class="form-control form-control-sm" required placeholder="ex : Production, Logistique…">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Icône (Font Awesome)</label>
+            <input type="text" name="icon" class="form-control form-control-sm" placeholder="fa-store" value="fa-folder-open">
+        </div>
+        <div class="col-md-2 text-end">
+            <button type="submit" class="btn btn-sm btn-brand w-100"><i class="fas fa-plus"></i> Ajouter</button>
+        </div>
+    </form>
+    <div class="form-text mt-2">Icônes : voir <a href="https://fontawesome.com/v5/search?o=r&m=free" target="_blank" rel="noopener">fontawesome.com</a> (ex : fa-store, fa-industry, fa-truck, fa-utensils).</div>
+</div>
+
+<div class="card border-0 shadow-sm" style="max-width:720px;">
+    <div class="card-body">
+        {% for d in departments %}
+        <div class="dept-row">
+            <span class="dept-ico-sm"><i class="fas {{ d.icon }}"></i></span>
+            <form method="POST" action="{{ url_for('help.department_update', dept_id=d.id) }}"
+                  class="d-flex align-items-center gap-2 flex-grow-1">
+                <input type="number" name="sort_order" value="{{ d.sort_order }}" class="form-control form-control-sm" style="width:72px;" title="Ordre">
+                <input type="text" name="name" value="{{ d.name }}" class="form-control form-control-sm">
+                <input type="text" name="icon" value="{{ d.icon }}" class="form-control form-control-sm" style="width:140px;" title="Icône">
+                <span class="text-muted small" style="white-space:nowrap;">{{ counts.get(d.slug, 0) }} SOP</span>
+                <a href="{{ url_for('help.manage', department=d.slug) }}" class="btn btn-sm btn-outline-secondary" title="Gérer les SOP"><i class="fas fa-list"></i></a>
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enregistrer"><i class="fas fa-save"></i></button>
+            </form>
+            <form method="POST" action="{{ url_for('help.department_delete', dept_id=d.id) }}"
+                  onsubmit="return confirm('Supprimer ce département ? (uniquement s\'il est vide)');">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+            </form>
+        </div>
+        {% else %}
+        <p class="text-center text-muted py-4 mb-0">Aucun département. Créez-en un ci-dessus.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
