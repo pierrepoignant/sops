@@ -7,7 +7,10 @@ on:
 env:
   REGISTRY: 8ie06lx5.c1.gra9.container-registry.ovh.net
   # Harbor image path: <registry>/<project>/<repository>
-  IMAGE: 8ie06lx5.c1.gra9.container-registry.ovh.net/sops/sops
+  # NOTE: pushed into the existing `stores` Harbor project (repo `sops`) because
+  # the CI robot account has push rights there. Move to a dedicated `sops`
+  # project once it exists + the robot is granted push access.
+  IMAGE: 8ie06lx5.c1.gra9.container-registry.ovh.net/stores/sops
 
 jobs:
   build-and-deploy:
