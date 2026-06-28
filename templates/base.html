@@ -72,6 +72,12 @@
 
         .sidebar-menu { padding: 20px 0; flex: 1; display: flex; flex-direction: column; }
 
+        .menu-label {
+            padding: 4px 20px 8px; font-size: 11px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.6px; color: var(--pim-text-muted);
+        }
+        .sidebar.collapsed .menu-label { display: none; }
+
         .menu-section-toggle {
             display: flex; align-items: center;
             padding: 10px 20px; cursor: pointer;
@@ -125,8 +131,10 @@
         }
         .page-title h1 {
             margin: 0; font-size: 24px; font-weight: 600;
-            color: var(--pim-heading); flex: 1;
+            color: var(--pim-heading);
         }
+        .header-logo-link { flex-shrink: 0; margin-left: 16px; line-height: 0; }
+        .header-logo { height: 46px; width: auto; max-width: 170px; object-fit: contain; }
         .page-buttons-container {
             display: flex; gap: 0.5rem;
             justify-content: flex-end; flex-wrap: wrap;
@@ -164,6 +172,8 @@
             .content-area { padding: 15px; }
             .page-title { padding: 8px 10px 8px 45px; }
             .page-title h1 { font-size: 0.9rem; }
+            .header-logo { height: 30px; max-width: 110px; }
+            .header-logo-link { margin-left: 10px; }
         }
         @media (min-width: 769px) {
             .mobile-menu-btn { display: none !important; }
@@ -180,7 +190,6 @@
     <div class="sidebar" id="sidebar">
         <div class="sidebar-logo">
             <a href="{{ url_for('home') }}" class="brand-mark">
-                <img src="{{ brand_logo }}" alt="{{ brand_name }}">
                 <span class="brand-text">
                     <span class="b-name">{{ brand_name }}</span>
                     <span class="b-sub">SOP</span>
@@ -209,10 +218,19 @@
 
         <div class="sidebar-menu">
             {% if current_user.is_authenticated %}
-            <a href="{{ url_for('help.index') }}" class="menu-item {% if request.blueprint == 'help' and not (request.endpoint or '').startswith('help.manage') and not (request.endpoint or '').startswith('help.departments') and not (request.endpoint or '').startswith('help.categories') %}active{% endif %}">
+            {% set active_dept = (dept.slug if dept is defined and dept else (request.view_args.get('dept_slug') if request.view_args else None)) %}
+            <div class="menu-label">Départements</div>
+            {% for d in brand_departments %}
+            <a href="{{ url_for('help.department', dept_slug=d.slug) }}" class="menu-item {% if active_dept == d.slug %}active{% endif %}">
+                <i class="fas {{ d.icon }}"></i>
+                <span class="menu-title">{{ d.name }}</span>
+            </a>
+            {% else %}
+            <a href="{{ url_for('help.index') }}" class="menu-item {% if request.endpoint == 'help.index' %}active{% endif %}">
                 <i class="fas fa-book-open"></i>
                 <span class="menu-title">SOP</span>
             </a>
+            {% endfor %}
             {% endif %}
 
             {% if has_module('administration') or has_module('media') %}
@@ -277,6 +295,9 @@
                     <p class="text-muted mb-0" style="font-size: 14px;">{% block page_subtitle %}{% endblock %}</p>
                 {% endif %}
             </div>
+            <a href="{{ url_for('home') }}" class="header-logo-link">
+                <img class="header-logo" src="{{ brand_logo }}" alt="{{ brand_name }}">
+            </a>
         </div>
 
         {% if self.page_buttons() %}

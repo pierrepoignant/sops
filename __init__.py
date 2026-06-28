@@ -132,6 +132,18 @@ def create_app(db_name='ovh', redis_server='localhost'):
 
         brand_id = getattr(g, 'brand', None) or 'sablesienne'
         brand = get_brand(brand_id)
+
+        # Departments for the active brand — drives the left sidebar menu.
+        brand_departments = []
+        try:
+            if current_user.is_authenticated:
+                from help.models import SopDepartment
+                brand_departments = (
+                    SopDepartment.query.filter_by(brand=brand_id)
+                    .order_by(SopDepartment.sort_order, SopDepartment.name).all())
+        except Exception:
+            brand_departments = []
+
         return {
             'has_module': lambda mid: user_has_module_access(current_user, mid),
             'user_modules': lambda: user_modules(current_user),
@@ -140,6 +152,7 @@ def create_app(db_name='ovh', redis_server='localhost'):
             'brand': brand,
             'brand_name': brand['name'],
             'brand_logo': url_for('static', filename=f"brand/{brand_id}/logo.png"),
+            'brand_departments': brand_departments,
         }
 
     with app.app_context():
