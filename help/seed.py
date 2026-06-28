@@ -34,12 +34,15 @@ def _load_json(path):
 
 
 def seed_media(app):
+    """Upload the committed seed images to S3 and register a MediaAsset row for
+    each. Self-healing: every item is checked individually and committed on its
+    own, so a previously-interrupted seed (or a missing row) is filled in on a
+    later boot rather than skipped wholesale."""
+    from sqlalchemy.exc import IntegrityError
     from media import storage
     from media.models import MediaAsset
 
     if not os.path.exists(MEDIA_MANIFEST):
-        return 0
-    if MediaAsset.query.filter_by(is_seed=True).count() > 0:
         return 0
     if not storage.is_configured():
         app.logger.warning('Media seed skipped: S3 storage not configured (set OVH__* vars).')
@@ -65,8 +68,11 @@ def seed_media(app):
             content_type=it.get('content_type', 'application/octet-stream'),
             s3_key=key, size=len(data), is_seed=True,
         ))
-        created += 1
-    db.session.commit()
+        try:
+            db.session.commit()  # per-item so one clash can't lose the batch
+            created += 1
+        except IntegrityError:
+            db.session.rollback()  # another worker/boot already inserted it
     return created
 
 

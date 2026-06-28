@@ -1,4 +1,5 @@
 import argparse
+import os
 from __init__ import create_app
 
 if __name__ == '__main__':
@@ -11,8 +12,15 @@ if __name__ == '__main__':
     app = create_app(db_name=args.db, redis_server=args.redis)
     app.config['DB_NAME'] = args.db
 
+    # Debug + the Werkzeug reloader are opt-in via FLASK_DEBUG (default off).
+    # In production the reloader is disabled so the app runs as a single process
+    # — two processes would race the one-time startup seeding — and the
+    # interactive debugger is never exposed publicly.
+    debug = os.environ.get('FLASK_DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+
     app.run(
         host='0.0.0.0',
         port=int(args.port),
-        debug=True
+        debug=debug,
+        use_reloader=debug,
     )
