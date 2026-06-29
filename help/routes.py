@@ -179,8 +179,22 @@ def article(slug):
             abort(404)
     dept = _get_department(art.department, brand)
     tree, orphans = _reader_tree(brand, art.department)
+    # Flat, display-ordered list of the department's SOPs for top-nav prev/next.
+    flat = []
+    for n in tree:
+        flat.extend(n['articles'])
+        for c in n['children']:
+            flat.extend(c['articles'])
+    for o in orphans:
+        flat.extend(o['articles'])
+    ids = [a.id for a in flat]
+    prev_art = next_art = None
+    if art.id in ids:
+        i = ids.index(art.id)
+        prev_art = flat[i - 1] if i > 0 else None
+        next_art = flat[i + 1] if i < len(flat) - 1 else None
     return render_template('help/article.html', art=art, dept=dept, tree=tree,
-                           orphans=orphans)
+                           orphans=orphans, prev_art=prev_art, next_art=next_art)
 
 
 # --- Management (admin only) ---

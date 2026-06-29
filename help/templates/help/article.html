@@ -12,13 +12,16 @@
 
 {% block head %}
 <style>
-    .help-nav { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px; position: sticky; top: 16px; }
-    .help-nav .nav-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--pim-text-muted); margin: 10px 0 4px; font-weight: 700; }
-    .help-nav .nav-subcat { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--pim-text-muted); margin: 8px 0 2px 8px; }
-    .help-nav .nav-sub a { margin-left: 8px; }
-    .help-nav a { display: block; padding: 4px 6px; border-radius: 5px; color: var(--pim-text); text-decoration: none; font-size: 13px; }
-    .help-nav a:hover { background: var(--pim-bg-subtle); color: var(--pim-primary); }
-    .help-nav a.active { background: rgba(var(--pim-primary-rgb), 0.10); color: var(--pim-primary); font-weight: 600; }
+    .sop-wrap { max-width: 940px; margin: 0 auto; }
+    .sop-topnav {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+        padding: 10px 12px; margin-bottom: 16px;
+    }
+    .sop-topnav .spacer { margin-left: auto; }
+    .sop-jump { max-height: 60vh; overflow-y: auto; min-width: 280px; }
+    .sop-jump .dropdown-header { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--pim-text-muted); }
+    .sop-jump .dropdown-item.active { background: var(--pim-primary); color: var(--pim-on-primary); }
     .article-body { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 26px 30px; }
     .article-body h2 { font-size: 20px; margin-top: 22px; color: var(--pim-primary); }
     .article-body h3 { font-size: 17px; margin-top: 18px; }
@@ -27,40 +30,86 @@
     .article-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
     .article-body th, .article-body td { border: 1px solid var(--pim-border); padding: 6px 10px; vertical-align: top; }
     .article-body ul, .article-body ol { padding-left: 22px; }
+    .sop-pager { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+    .sop-pager a { flex: 1; max-width: 48%; background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+                   padding: 12px 16px; text-decoration: none; color: var(--pim-text); transition: border-color .15s; }
+    .sop-pager a:hover { border-color: var(--pim-primary); }
+    .sop-pager .dir { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--pim-text-muted); }
+    .sop-pager .ttl { font-weight: 600; color: var(--pim-link); }
+    .sop-pager a.next { text-align: right; margin-left: auto; }
 </style>
 {% endblock %}
 
 {% block content %}
-{% include "help/_searchbar.html" %}
-<div class="row g-3">
-    <div class="col-lg-3 d-none d-lg-block">
-        <div class="help-nav">
-            {% macro nav_links(arts) %}
-                {% for a in arts %}
-                <a href="{{ url_for('help.article', slug=a.slug) }}" class="{% if a.id == art.id %}active{% endif %}">{{ a.title }}</a>
-                {% endfor %}
-            {% endmacro %}
-            {% for n in tree %}
-            <div class="nav-cat">{{ n.name }}</div>
-            {{ nav_links(n.articles) }}
-            {% for c in n.children %}
-            <div class="nav-subcat">{{ c.name }}</div>
-            <div class="nav-sub">{{ nav_links(c.articles) }}</div>
-            {% endfor %}
-            {% endfor %}
-            {% for o in orphans %}
-            <div class="nav-cat">{{ o.name }}</div>
-            {{ nav_links(o.articles) }}
-            {% endfor %}
-        </div>
-    </div>
-    <div class="col-lg-9">
-        {% if not art.is_published %}
-        <div class="alert alert-warning py-2"><i class="fas fa-eye-slash"></i> Brouillon (non publié)</div>
+<div class="sop-wrap">
+    {% include "help/_searchbar.html" %}
+
+    <div class="sop-topnav">
+        {% if dept %}
+        <a href="{{ url_for('help.department', dept_slug=dept.slug) }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> {{ dept.name }}
+        </a>
         {% endif %}
-        <div class="article-body">
-            {{ art.body_html | safe }}
+        <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-list-ul"></i> Toutes les procédures
+            </button>
+            <ul class="dropdown-menu sop-jump">
+                {% macro jump_links(arts) %}
+                    {% for a in arts %}
+                    <li><a class="dropdown-item {% if a.id == art.id %}active{% endif %}" href="{{ url_for('help.article', slug=a.slug) }}">{{ a.title }}</a></li>
+                    {% endfor %}
+                {% endmacro %}
+                {% for n in tree %}
+                <li><h6 class="dropdown-header">{{ n.name }}</h6></li>
+                {{ jump_links(n.articles) }}
+                {% for c in n.children %}
+                <li><h6 class="dropdown-header ps-4">{{ c.name }}</h6></li>
+                {{ jump_links(c.articles) }}
+                {% endfor %}
+                {% endfor %}
+                {% for o in orphans %}
+                <li><h6 class="dropdown-header">{{ o.name }}</h6></li>
+                {{ jump_links(o.articles) }}
+                {% endfor %}
+            </ul>
         </div>
+        <div class="spacer"></div>
+        {% if prev_art %}
+        <a href="{{ url_for('help.article', slug=prev_art.slug) }}" class="btn btn-sm btn-outline-secondary" title="{{ prev_art.title }}">
+            <i class="fas fa-chevron-left"></i> Précédent
+        </a>
+        {% endif %}
+        {% if next_art %}
+        <a href="{{ url_for('help.article', slug=next_art.slug) }}" class="btn btn-sm btn-outline-secondary" title="{{ next_art.title }}">
+            Suivant <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
     </div>
+
+    {% if not art.is_published %}
+    <div class="alert alert-warning py-2"><i class="fas fa-eye-slash"></i> Brouillon (non publié)</div>
+    {% endif %}
+
+    <div class="article-body">
+        {{ art.body_html | safe }}
+    </div>
+
+    {% if prev_art or next_art %}
+    <div class="sop-pager">
+        {% if prev_art %}
+        <a href="{{ url_for('help.article', slug=prev_art.slug) }}" class="prev">
+            <div class="dir"><i class="fas fa-chevron-left"></i> Précédent</div>
+            <div class="ttl">{{ prev_art.title }}</div>
+        </a>
+        {% endif %}
+        {% if next_art %}
+        <a href="{{ url_for('help.article', slug=next_art.slug) }}" class="next">
+            <div class="dir">Suivant <i class="fas fa-chevron-right"></i></div>
+            <div class="ttl">{{ next_art.title }}</div>
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
