@@ -22,7 +22,9 @@ def _drop_legacy_tables():
     tables = insp.get_table_names()
     if 'sop_quizzes' in tables:
         cols = {c['name'] for c in insp.get_columns('sop_quizzes')}
-        if 'article_id' in cols:  # old article-level schema
+        # Two short-lived shapes preceded the multi-quiz one: article-level
+        # ('article_id') and single-quiz-per-department ('is_open').
+        if 'article_id' in cols or 'is_open' in cols:
             for t in ('sop_quiz_attempts', 'sop_quiz_questions', 'sop_quizzes'):
                 if t in tables:
                     db.session.execute(text(f'DROP TABLE {t}'))

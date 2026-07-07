@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}{{ quiz.title }} · {{ dept.name }}{% endblock %}
+{% block page_title %}{{ quiz.title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.department', dept_slug=dept.slug) }}#quiz" style="color:var(--pim-text-muted);text-decoration:none;">&larr; Quiz {{ dept.name }}</a>{% endblock %}
+
+{% block head %}
+<style>
+    .sop-wrap { max-width: 780px; margin: 0 auto; }
+    .quiz-q { background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+              padding: 14px 16px; margin-bottom: 12px; }
+    .quiz-q .qtext { font-weight: 600; margin-bottom: 8px; }
+    .quiz-q .opt { display: block; padding: 4px 0; font-size: 14px; }
+    .intro { background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+             padding: 14px 18px; margin-bottom: 16px; font-size: 13.5px; color: var(--pim-text-secondary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sop-wrap">
+    <div class="intro">
+        <i class="fas fa-graduation-cap"></i>
+        {{ questions | length }} questions ·
+        En cas de mauvaise réponse, la correction vous renvoie vers la procédure à relire.
+        {% if my_attempts %}
+        <div class="text-muted mt-1" style="font-size:12.5px;">
+            Votre dernier essai : <strong>{{ my_attempts[0].score }}/{{ my_attempts[0].total }}</strong>
+            le {{ my_attempts[0].created_at.strftime('%d/%m/%Y à %H:%M') }} · {{ my_attempts | length }} essai(s) au total.
+        </div>
+        {% endif %}
+    </div>
+
+    <form method="post" action="{{ url_for('help.quiz_submit', quiz_id=quiz.id) }}">
+        {% for q in questions %}
+        <div class="quiz-q">
+            <div class="qtext">{{ loop.index }}. {{ q.question }}</div>
+            {% for opt in q.options %}
+            <label class="opt">
+                <input type="radio" name="q{{ q.id }}" value="{{ loop.index0 }}" required class="form-check-input me-1">
+                {{ opt }}
+            </label>
+            {% endfor %}
+        </div>
+        {% endfor %}
+        <button class="btn btn-brand"><i class="fas fa-paper-plane"></i> Valider mes réponses</button>
+    </form>
+</div>
+{% endblock %}

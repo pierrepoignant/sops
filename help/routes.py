@@ -271,33 +271,36 @@ def department(dept_slug):
         abort(404)
     tree, orphans = _reader_tree(brand, dept.slug)
 
-    # Department quiz: staff take it when open; the owner (or an admin)
-    # prepares it from the Quiz tab.
+    # Quizzes: staff see the active ones (with their own scores); the owner
+    # (or an admin) manages the full list from the "Gestion des quiz" tab.
     can_manage_quiz = user_owns_department(current_user, dept)
-    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
-    questions = (SopQuizQuestion.query
-                 .filter_by(brand=brand, department=dept.slug)
-                 .order_by(SopQuizQuestion.id).all())
-    approved_questions = [q for q in questions if q.status == 'approved']
-    proposed_questions = [q for q in questions if q.status == 'proposed']
-    quiz_open = bool(quiz and quiz.is_open and approved_questions)
-    my_attempts = (SopQuizAttempt.query
-                   .filter_by(brand=brand, department=dept.slug,
-                              user_id=current_user.id)
-                   .order_by(SopQuizAttempt.id.desc()).all())
-    all_attempts = []
+    all_quizzes = (SopQuiz.query.filter_by(brand=brand, department=dept.slug)
+                   .order_by(SopQuiz.created_at.desc()).all())
+    my_attempts_by_quiz = {}
+    for a in (SopQuizAttempt.query
+              .join(SopQuiz)
+              .filter(SopQuiz.brand == brand, SopQuiz.department == dept.slug,
+                      SopQuizAttempt.user_id == current_user.id)
+              .order_by(SopQuizAttempt.id).all()):
+        my_attempts_by_quiz.setdefault(a.quiz_id, []).append(a)
+    # Staff list: active quizzes that actually have approved questions.
+    active_quizzes = [(q, my_attempts_by_quiz.get(q.id, []))
+                      for q in all_quizzes
+                      if q.is_active and q.approved_questions]
+    admin_quizzes = []
     if can_manage_quiz:
-        all_attempts = (SopQuizAttempt.query
-                        .filter_by(brand=brand, department=dept.slug)
-                        .order_by(SopQuizAttempt.id.desc()).limit(100).all())
+        for q in all_quizzes:
+            attempts = q.attempts.order_by(SopQuizAttempt.id.desc()).all()
+            avg = (sum(a.score / a.total for a in attempts if a.total)
+                   / len(attempts) * 100) if attempts else None
+            admin_quizzes.append({'quiz': q, 'n_attempts': len(attempts),
+                                  'avg_pct': avg})
 
     return render_template('help/department.html', dept=dept, tree=tree,
                            orphans=orphans, departments=_departments(brand),
                            can_manage_quiz=can_manage_quiz,
-                           quiz=quiz, quiz_open=quiz_open,
-                           approved_questions=approved_questions,
-                           proposed_questions=proposed_questions,
-                           my_attempts=my_attempts, all_attempts=all_attempts,
+                           active_quizzes=active_quizzes,
+                           admin_quizzes=admin_quizzes,
                            ai_ok=_ai_configured())
 
 
@@ -1152,56 +1155,134 @@ def article_qr_poster(slug):
                            dept=_get_department(art.department))
 
 
-# --- Training quiz (department-level) ---
+# --- Training quizzes (several per department) ---
 
-def _quiz_department(dept_slug, manage=False):
-    dept = _get_department(dept_slug, _brand())
+def _get_quiz(quiz_id, manage=False):
+    """Load a quiz of the active brand (+ its department); 403 unless the
+    caller owns the department when manage=True."""
+    quiz = db.session.get(SopQuiz, quiz_id)
+    if not quiz or quiz.brand != _brand():
+        abort(404)
+    dept = _get_department(quiz.department)
     if not dept:
         abort(404)
     if manage and not user_owns_department(current_user, dept):
         abort(403)
-    return dept
+    return quiz, dept
 
 
-@help_bp.route('/d/<dept_slug>/quiz/generate', methods=['POST'])
-@login_required
-def quiz_generate(dept_slug):
+def _generate_into_quiz(quiz, dept, count):
+    """AI-generate ``count`` proposed questions into ``quiz``. Returns an
+    error message to flash, or None on success."""
     from help import ai_quiz
     brand = _brand()
-    dept = _quiz_department(dept_slug, manage=True)
-    try:
-        count = max(1, min(20, int(request.form.get('count') or 10)))
-    except ValueError:
-        count = 10
     articles = (HelpArticle.query
                 .filter_by(brand=brand, department=dept.slug, is_published=True)
                 .order_by(HelpArticle.sort_order, HelpArticle.title).all())
     if not articles:
-        flash("Aucun SOP publié dans ce département — rien à générer.", 'warning')
-        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
-    existing = SopQuizQuestion.query.filter_by(
-        brand=brand, department=dept.slug).filter(
-        SopQuizQuestion.status != 'rejected').all()
+        return "Aucun SOP publié dans ce département — rien à générer."
+    # Avoid near-duplicates across every quiz of the department.
+    existing = (SopQuizQuestion.query.join(SopQuiz)
+                .filter(SopQuiz.brand == brand,
+                        SopQuiz.department == dept.slug,
+                        SopQuizQuestion.status != 'rejected').all())
     try:
         questions = ai_quiz.generate_questions(dept, articles, count=count,
                                                existing_questions=existing)
     except RuntimeError as e:
-        flash(str(e), 'danger')
-        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+        return str(e)
     by_slug = {a.slug: a.id for a in articles}
     for q in questions:
         db.session.add(SopQuizQuestion(
-            brand=brand, department=dept.slug,
+            quiz_id=quiz.id,
             article_id=by_slug.get(q.get('article_slug')),
             question=q['question'],
             options_json=json.dumps(q['options'], ensure_ascii=False),
             correct_index=q['correct_index'], explanation=q['explanation']))
-    if not SopQuiz.query.filter_by(brand=brand, department=dept.slug).first():
-        db.session.add(SopQuiz(brand=brand, department=dept.slug))
     db.session.commit()
     flash(f'{len(questions)} questions générées — validez celles à garder.',
           'success')
-    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+    return None
+
+
+@help_bp.route('/d/<dept_slug>/quiz/new', methods=['POST'])
+@login_required
+def quiz_create(dept_slug):
+    brand = _brand()
+    dept = _get_department(dept_slug, brand)
+    if not dept:
+        abort(404)
+    if not user_owns_department(current_user, dept):
+        abort(403)
+    try:
+        count = max(1, min(20, int(request.form.get('count') or 10)))
+    except ValueError:
+        count = 10
+    title = (request.form.get('title') or '').strip()
+    if not title:
+        title = f"Quiz {dept.name} du {datetime.utcnow().strftime('%d/%m/%Y')}"
+    quiz = SopQuiz(brand=brand, department=dept.slug, title=title[:160],
+                   created_by_id=current_user.id)
+    db.session.add(quiz)
+    db.session.flush()
+    err = _generate_into_quiz(quiz, dept, count)
+    if err:
+        db.session.rollback()
+        flash(err, 'danger')
+        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz-admin')
+    return redirect(url_for('help.quiz_admin', quiz_id=quiz.id))
+
+
+@help_bp.route('/quiz/<int:quiz_id>/admin')
+@login_required
+def quiz_admin(quiz_id):
+    quiz, dept = _get_quiz(quiz_id, manage=True)
+    attempts = quiz.attempts.order_by(SopQuizAttempt.id.desc()).all()
+    return render_template('help/quiz_admin.html', quiz=quiz, dept=dept,
+                           attempts=attempts, ai_ok=_ai_configured())
+
+
+@help_bp.route('/quiz/<int:quiz_id>/generate', methods=['POST'])
+@login_required
+def quiz_generate(quiz_id):
+    quiz, dept = _get_quiz(quiz_id, manage=True)
+    try:
+        count = max(1, min(20, int(request.form.get('count') or 10)))
+    except ValueError:
+        count = 10
+    err = _generate_into_quiz(quiz, dept, count)
+    if err:
+        flash(err, 'danger')
+    return redirect(url_for('help.quiz_admin', quiz_id=quiz.id))
+
+
+@help_bp.route('/quiz/<int:quiz_id>/toggle', methods=['POST'])
+@login_required
+def quiz_toggle(quiz_id):
+    quiz, dept = _get_quiz(quiz_id, manage=True)
+    if not quiz.is_active and not quiz.approved_questions:
+        flash("Validez au moins une question avant d'activer ce quiz.",
+              'warning')
+    else:
+        quiz.is_active = not quiz.is_active
+        db.session.commit()
+        flash(f"Quiz « {quiz.title} » "
+              f"{'activé — visible des employés' if quiz.is_active else 'désactivé'}.",
+              'success')
+    dest = request.form.get('back') or ''
+    if dest == 'admin':
+        return redirect(url_for('help.quiz_admin', quiz_id=quiz.id))
+    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz-admin')
+
+
+@help_bp.route('/quiz/<int:quiz_id>/delete', methods=['POST'])
+@login_required
+def quiz_delete(quiz_id):
+    quiz, dept = _get_quiz(quiz_id, manage=True)
+    db.session.delete(quiz)  # questions + attempts cascade
+    db.session.commit()
+    flash(f'Quiz « {quiz.title} » supprimé.', 'success')
+    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz-admin')
 
 
 @help_bp.route('/quiz/questions/<int:q_id>/<action>', methods=['POST'])
@@ -1210,58 +1291,38 @@ def quiz_question_action(q_id, action):
     if action not in ('approve', 'reject', 'delete'):
         abort(404)
     q = db.session.get(SopQuizQuestion, q_id)
-    if not q or q.brand != _brand():
+    if not q:
         abort(404)
-    _quiz_department(q.department, manage=True)
-    dept_slug = q.department
+    quiz, _dept = _get_quiz(q.quiz_id, manage=True)
     if action == 'delete':
         db.session.delete(q)
     else:
         q.status = 'approved' if action == 'approve' else 'rejected'
     db.session.commit()
-    return redirect(url_for('help.department', dept_slug=dept_slug) + '#quiz')
+    return redirect(url_for('help.quiz_admin', quiz_id=quiz.id))
 
 
-@help_bp.route('/d/<dept_slug>/quiz/<action>', methods=['POST'])
+@help_bp.route('/quiz/<int:quiz_id>/take')
 @login_required
-def quiz_toggle(dept_slug, action):
-    if action not in ('open', 'close'):
-        abort(404)
-    brand = _brand()
-    dept = _quiz_department(dept_slug, manage=True)
-    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
-    if not quiz:
-        quiz = SopQuiz(brand=brand, department=dept.slug)
-        db.session.add(quiz)
-    if action == 'open':
-        approved = SopQuizQuestion.query.filter_by(
-            brand=brand, department=dept.slug, status='approved').count()
-        if not approved:
-            flash("Validez au moins une question avant d'ouvrir le quiz.",
-                  'warning')
-            return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
-        quiz.is_open = True
-        quiz.opened_at = datetime.utcnow()
-        flash('Quiz ouvert — les employés peuvent maintenant le passer.',
-              'success')
-    else:
-        quiz.is_open = False
-        flash('Quiz fermé.', 'success')
-    db.session.commit()
-    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+def quiz_take(quiz_id):
+    quiz, dept = _get_quiz(quiz_id)
+    questions = quiz.approved_questions
+    if not (quiz.is_active and questions):
+        flash("Ce quiz n'est pas actif.", 'warning')
+        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+    my_attempts = (quiz.attempts.filter_by(user_id=current_user.id)
+                   .order_by(SopQuizAttempt.id.desc()).all())
+    return render_template('help/quiz_take.html', quiz=quiz, dept=dept,
+                           questions=questions, my_attempts=my_attempts)
 
 
-@help_bp.route('/d/<dept_slug>/quiz/submit', methods=['POST'])
+@help_bp.route('/quiz/<int:quiz_id>/submit', methods=['POST'])
 @login_required
-def quiz_submit(dept_slug):
-    brand = _brand()
-    dept = _quiz_department(dept_slug)
-    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
-    questions = (SopQuizQuestion.query
-                 .filter_by(brand=brand, department=dept.slug, status='approved')
-                 .order_by(SopQuizQuestion.id).all())
-    if not (quiz and quiz.is_open and questions):
-        flash("Ce quiz n'est pas ouvert.", 'warning')
+def quiz_submit(quiz_id):
+    quiz, dept = _get_quiz(quiz_id)
+    questions = quiz.approved_questions
+    if not (quiz.is_active and questions):
+        flash("Ce quiz n'est pas actif.", 'warning')
         return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
     answers = []
     graded = []
@@ -1276,11 +1337,10 @@ def quiz_submit(dept_slug):
         score += 1 if ok else 0
         answers.append(picked)
         graded.append((q, picked, ok))
-    attempt = SopQuizAttempt(brand=brand, department=dept.slug,
-                             user_id=current_user.id,
+    attempt = SopQuizAttempt(quiz_id=quiz.id, user_id=current_user.id,
                              score=score, total=len(questions),
                              answers_json=json.dumps(answers))
     db.session.add(attempt)
     db.session.commit()
-    return render_template('help/quiz_result.html', dept=dept, graded=graded,
-                           score=score, total=len(questions))
+    return render_template('help/quiz_result.html', quiz=quiz, dept=dept,
+                           graded=graded, score=score, total=len(questions))

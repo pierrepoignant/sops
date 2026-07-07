@@ -228,33 +228,42 @@ class SopSearchLog(db.Model):
 
 
 class SopQuiz(db.Model):
-    """Quiz state for one (brand, department): open (staff can take it) or
-    closed (the owner is still preparing/validating questions)."""
+    """One named quiz of a department. A department can have several; staff
+    only see (and take) the active ones. The owner/admin prepares questions,
+    then flips ``is_active``."""
     __tablename__ = 'sop_quizzes'
 
     id = db.Column(db.Integer, primary_key=True)
     brand = db.Column(db.String(40), nullable=False, index=True)
-    department = db.Column(db.String(80), nullable=False)
-    is_open = db.Column(db.Boolean, nullable=False, default=False)
-    opened_at = db.Column(db.DateTime, nullable=True)
+    department = db.Column(db.String(80), nullable=False, index=True)
+    title = db.Column(db.String(160), nullable=False)
+    is_active = db.Column(db.Boolean, nullable=False, default=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                              nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    __table_args__ = (
-        db.UniqueConstraint('brand', 'department', name='uq_quiz_brand_dept'),
-    )
+    created_by = db.relationship('User')
+
+    @property
+    def approved_questions(self):
+        return [q for q in self.questions if q.status == 'approved']
+
+    @property
+    def proposed_questions(self):
+        return [q for q in self.questions if q.status == 'proposed']
 
 
 class SopQuizQuestion(db.Model):
-    """One multiple-choice question of a department quiz. AI proposes
-    ('proposed'); the department owner validates ('approved') or discards
-    ('rejected'). Only approved questions are served to staff. ``article_id``
-    points at the SOP the question was drawn from, so a wrong answer can link
-    back to the procedure to (re)read."""
+    """One multiple-choice question of a quiz. AI proposes ('proposed'); the
+    department owner validates ('approved') or discards ('rejected'). Only
+    approved questions are served to staff. ``article_id`` points at the SOP
+    the question was drawn from, so a wrong answer can link back to the
+    procedure to (re)read."""
     __tablename__ = 'sop_quiz_questions'
 
     id = db.Column(db.Integer, primary_key=True)
-    brand = db.Column(db.String(40), nullable=False, index=True)
-    department = db.Column(db.String(80), nullable=False, index=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('sop_quizzes.id'),
+                        nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
                            nullable=True, index=True)
     question = db.Column(db.Text, nullable=False)
@@ -265,6 +274,10 @@ class SopQuizQuestion(db.Model):
                        index=True)  # proposed | approved | rejected
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    quiz = db.relationship(
+        'SopQuiz',
+        backref=db.backref('questions', cascade='all, delete-orphan',
+                           order_by='SopQuizQuestion.id'))
     article = db.relationship('HelpArticle')
 
     @property
@@ -277,12 +290,12 @@ class SopQuizQuestion(db.Model):
 
 
 class SopQuizAttempt(db.Model):
-    """One staff run through a department's quiz."""
+    """One staff run through a quiz."""
     __tablename__ = 'sop_quiz_attempts'
 
     id = db.Column(db.Integer, primary_key=True)
-    brand = db.Column(db.String(40), nullable=False, index=True)
-    department = db.Column(db.String(80), nullable=False, index=True)
+    quiz_id = db.Column(db.Integer, db.ForeignKey('sop_quizzes.id'),
+                        nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
                         index=True)
     score = db.Column(db.Integer, nullable=False, default=0)
@@ -290,4 +303,8 @@ class SopQuizAttempt(db.Model):
     answers_json = db.Column(db.Text, nullable=False, default='[]')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    quiz = db.relationship(
+        'SopQuiz',
+        backref=db.backref('attempts', cascade='all, delete-orphan',
+                           lazy='dynamic'))
     user = db.relationship('User')

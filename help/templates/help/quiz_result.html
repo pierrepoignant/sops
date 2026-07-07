@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Résultat du quiz · {{ dept.name }}{% endblock %}
-{% block page_title %}Résultat du quiz — {{ dept.name }}{% endblock %}
-{% block page_subtitle %}<a href="{{ url_for('help.department', dept_slug=dept.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; {{ dept.name }}</a>{% endblock %}
+{% block title %}Résultat · {{ quiz.title }}{% endblock %}
+{% block page_title %}Résultat — {{ quiz.title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.department', dept_slug=dept.slug) }}#quiz" style="color:var(--pim-text-muted);text-decoration:none;">&larr; Quiz {{ dept.name }}</a>{% endblock %}
 
 {% block head %}
 <style>
@@ -34,10 +34,10 @@
             {% else %}Relisez les procédures indiquées puis retentez le quiz.{% endif %}
         </div>
         <div class="mt-3 d-flex gap-2 justify-content-center flex-wrap">
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.department', dept_slug=dept.slug) }}">
-                <i class="fas fa-book-open"></i> Voir les procédures
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.department', dept_slug=dept.slug) }}#quiz">
+                <i class="fas fa-list"></i> Liste des quiz
             </a>
-            <a class="btn btn-sm btn-brand" href="{{ url_for('help.department', dept_slug=dept.slug) }}#quiz">
+            <a class="btn btn-sm btn-brand" href="{{ url_for('help.quiz_take', quiz_id=quiz.id) }}">
                 <i class="fas fa-redo"></i> Retenter le quiz
             </a>
         </div>
