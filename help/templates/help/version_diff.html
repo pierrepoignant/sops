@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Différences v{{ ver.version_no }} · {{ art.title }} · SOP{% endblock %}
+{% block page_title %}{{ art.title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.article', slug=art.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">Retour au SOP</a> · différences {% if prev %}v{{ prev.version_no }} → {% endif %}v{{ ver.version_no }}{% endblock %}
+
+{% block head %}
+<style>
+    .sop-wrap { max-width: 940px; margin: 0 auto; }
+    .diff-panel { background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+                  padding: 22px 26px; font-size: 14px; line-height: 1.9; }
+    .diff-panel del { background: #fde8e8; color: #9b1c1c; text-decoration: line-through;
+                      border-radius: 3px; padding: 1px 3px; }
+    .diff-panel ins { background: #def7e4; color: #14683a; text-decoration: none;
+                      border-radius: 3px; padding: 1px 3px; }
+    .diff-panel .skip { display: block; text-align: center; color: var(--pim-text-muted);
+                        margin: 6px 0; font-size: 12px; letter-spacing: 2px; }
+    .diff-meta { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
+    .diff-meta .box { flex: 1; min-width: 240px; background: white; border: 1px solid var(--pim-border);
+                      border-radius: 10px; padding: 10px 14px; }
+    .diff-meta .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--pim-text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sop-wrap">
+    <div class="alert alert-info py-2 d-flex align-items-center gap-2 flex-wrap">
+        <i class="fas fa-exchange-alt"></i>
+        <span>Modifications apportées par la version <strong>v{{ ver.version_no }}</strong>
+              ({{ ver.created_at.strftime('%d/%m/%Y à %H:%M') }}{% if ver.edited_by %}, {{ ver.edited_by.display_name }}{% endif %})</span>
+        <span class="ms-auto d-flex gap-2">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_view', art_id=art.id, version_no=ver.version_no) }}">
+                <i class="fas fa-eye"></i> Voir cette version
+            </a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.article', slug=art.slug) }}#versions">
+                <i class="fas fa-arrow-left"></i> Retour au SOP
+            </a>
+        </span>
+    </div>
+
+    <div class="diff-meta">
+        <div class="box">
+            <div class="lbl">Avant {% if prev %}(v{{ prev.version_no }}){% endif %}</div>
+            {% if prev %}
+            {{ prev.title }} — {{ prev.category }}
+            {% else %}
+            <span class="text-muted">Aucune version antérieure.</span>
+            {% endif %}
+        </div>
+        <div class="box">
+            <div class="lbl">Après (v{{ ver.version_no }})</div>
+            {{ ver.title }} — {{ ver.category }}
+        </div>
+    </div>
+
+    {% if prev and (prev.title != ver.title or prev.category != ver.category) %}
+    <div class="alert alert-secondary py-2" style="font-size:13px;">
+        {% if prev.title != ver.title %}Titre : <del>{{ prev.title }}</del> → <ins>{{ ver.title }}</ins><br>{% endif %}
+        {% if prev.category != ver.category %}Catégorie : <del>{{ prev.category }}</del> → <ins>{{ ver.category }}</ins>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="diff-panel">
+        {% if not changed %}
+        <p class="text-muted mb-0">Aucune différence dans le texte (mise en forme ou images uniquement).</p>
+        {% else %}
+        {% for op, text in segments %}
+            {%- if op == 'eq' %}{{ text }} {% elif op == 'del' %}<del>{{ text }}</del> {% elif op == 'ins' %}<ins>{{ text }}</ins> {% elif op == 'skip' %}<span class="skip">· · ·</span>{% endif -%}
+        {% endfor %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

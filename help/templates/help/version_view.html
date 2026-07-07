@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}v{{ ver.version_no }} · {{ ver.title }} · SOP{% endblock %}
+{% block page_title %}{{ ver.title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.article', slug=art.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">{{ art.title }}</a> · version {{ ver.version_no }}{% endblock %}
+
+{% block head %}
+<style>
+    .sop-wrap { max-width: 940px; margin: 0 auto; }
+    .article-body { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 26px 30px; }
+    .article-body h2 { font-size: 20px; margin-top: 22px; color: var(--pim-primary); }
+    .article-body h3 { font-size: 17px; margin-top: 18px; }
+    .article-body img, .article-body .help-img { max-width: 100%; height: auto; border-radius: 8px; margin: 12px 0; }
+    .article-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+    .article-body th, .article-body td { border: 1px solid var(--pim-border); padding: 6px 10px; vertical-align: top; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sop-wrap">
+    <div class="alert alert-info py-2 d-flex align-items-center gap-2 flex-wrap">
+        <i class="fas fa-history"></i>
+        <span>
+            Version <strong>v{{ ver.version_no }}</strong> du {{ ver.created_at.strftime('%d/%m/%Y à %H:%M') }}
+            {% if ver.edited_by %} par {{ ver.edited_by.display_name }}{% endif %}
+            — catégorie « {{ ver.category }} »
+        </span>
+        <span class="ms-auto d-flex gap-2">
+            {% if ver.version_no > 1 %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_diff', art_id=art.id, version_no=ver.version_no) }}">
+                <i class="fas fa-exchange-alt"></i> Différences
+            </a>
+            {% endif %}
+            {% if not is_latest %}
+            <form method="post" action="{{ url_for('help.version_restore', art_id=art.id, version_no=ver.version_no) }}"
+                  onsubmit="return confirm('Restaurer cette version ? La version actuelle reste dans l\'historique.');">
+                <button class="btn btn-sm btn-outline-warning"><i class="fas fa-undo"></i> Restaurer cette version</button>
+            </form>
+            {% endif %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.article', slug=art.slug) }}#versions">
+                <i class="fas fa-arrow-left"></i> Retour au SOP
+            </a>
+        </span>
+    </div>
+
+    <div class="article-body">
+        {{ ver.body_html | safe }}
+    </div>
+</div>
+{% endblock %}

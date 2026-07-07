@@ -11,6 +11,32 @@ from datetime import datetime
 from brands import brand_for_host, get_brand, BRANDS
 
 
+def _upgrade_schema():
+    """Additive schema upgrades for existing tables. db.create_all() creates
+    missing tables but never adds columns, so columns introduced after launch
+    are ALTERed in here (idempotent; SQLite + MySQL)."""
+    from sqlalchemy import inspect as sqla_inspect, text
+
+    wanted = {
+        'help_articles': {
+            'owner_id': 'INTEGER',
+            'review_due': 'DATE',
+            'last_reviewed_at': 'DATETIME',
+            'last_reviewed_by_id': 'INTEGER',
+        },
+    }
+    insp = sqla_inspect(db.engine)
+    for table, columns in wanted.items():
+        if table not in insp.get_table_names():
+            continue
+        existing = {c['name'] for c in insp.get_columns(table)}
+        for col, ddl in columns.items():
+            if col not in existing:
+                db.session.execute(
+                    text(f'ALTER TABLE {table} ADD COLUMN {col} {ddl}'))
+    db.session.commit()
+
+
 def create_app(db_name='ovh', redis_server='localhost'):
     from dotenv import load_dotenv
     load_dotenv()
@@ -144,9 +170,16 @@ def create_app(db_name='ovh', redis_server='localhost'):
         except Exception:
             brand_departments = []
 
+        def can_edit_sops(dept_slug=None):
+            """True when the user may edit SOPs — in the given department, or
+            in at least one department when dept_slug is None."""
+            from help.routes import user_can_edit
+            return user_can_edit(current_user, brand_id, dept_slug)
+
         return {
             'has_module': lambda mid: user_has_module_access(current_user, mid),
             'user_modules': lambda: user_modules(current_user),
+            'can_edit_sops': can_edit_sops,
             'safe_url_for': safe_url_for,
             'current_brand': brand_id,
             'brand': brand,
@@ -157,6 +190,7 @@ def create_app(db_name='ovh', redis_server='localhost'):
 
     with app.app_context():
         db.create_all()
+        _upgrade_schema()
 
     # Idempotent one-time seeding of the media library + SOP center.
     from help.seed import run_seed

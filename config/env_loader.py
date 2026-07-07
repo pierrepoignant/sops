@@ -48,4 +48,7 @@ ENV_VAR_KEYS = {
 
     # SendGrid (SMTP relay) — email login codes
     'sendgrid': ['api_key', 'from_email', 'from_name'],
+
+    # Anthropic Claude API — AI-generated training quizzes
+    'anthropic': ['api_key'],
 }

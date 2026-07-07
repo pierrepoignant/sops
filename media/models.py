@@ -26,3 +26,7 @@ class MediaAsset(db.Model):
     @property
     def is_image(self):
         return (self.content_type or '').startswith('image/')
+
+    @property
+    def is_video(self):
+        return (self.content_type or '').startswith('video/')

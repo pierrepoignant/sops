@@ -30,3 +30,12 @@ requests==2.32.3
 
 # Object storage (OVH S3-compatible) — media library
 boto3==1.35.49
+
+# QR codes (SVG, no image deps) — printable SOP posters
+segno==1.6.6
+
+# HTML cleanup of article bodies (editor cruft removal)
+beautifulsoup4==4.15.0
+
+# Claude API — AI-generated training quizzes
+anthropic>=0.79.0

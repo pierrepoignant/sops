@@ -60,6 +60,20 @@
                 <label class="form-label-sm">Ordre</label>
                 <input type="number" name="sort_order" class="form-control form-control-sm" value="{{ art.sort_order if art else 0 }}">
             </div>
+            <div class="col-md-6">
+                <label class="form-label-sm">Responsable de la procédure</label>
+                <select name="owner_id" class="form-select form-select-sm">
+                    <option value="">—</option>
+                    {% for u in owner_options %}
+                    <option value="{{ u.id }}" {% if art and art.owner_id == u.id %}selected{% endif %}>{{ u.display_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label-sm">Prochaine revue</label>
+                <input type="date" name="review_due" class="form-control form-control-sm"
+                       value="{{ art.review_due.strftime('%Y-%m-%d') if art and art.review_due else '' }}">
+            </div>
         </div>
 
         <div class="mt-3">
@@ -86,10 +100,19 @@
             <input type="hidden" name="body_html" id="body_html">
         </div>
 
-        <div class="form-check mt-3">
-            <input class="form-check-input" type="checkbox" name="is_published" id="is_published"
-                   {% if (art and art.is_published) or not art %}checked{% endif %}>
-            <label class="form-check-label" for="is_published">Publié</label>
+        <div class="d-flex flex-wrap gap-4 mt-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="is_published" id="is_published"
+                       {% if (art and art.is_published) or not art %}checked{% endif %}>
+                <label class="form-check-label" for="is_published">Publié</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="notify_team" id="notify_team">
+                <label class="form-check-label" for="notify_team">
+                    Notifier l'équipe par e-mail
+                    <span class="text-muted" style="font-size:12px;">(envoyé aux utilisateurs de la marque)</span>
+                </label>
+            </div>
         </div>
     </div>
     <div class="card-footer bg-white d-flex justify-content-between align-items-center">
@@ -98,6 +121,10 @@
             {% if art %}
             <button type="submit" form="deleteForm" class="btn btn-link text-danger">
                 <i class="fas fa-trash"></i> Supprimer
+            </button>
+            <button type="submit" form="cleanForm" class="btn btn-link text-muted"
+                    title="Supprime les styles en ligne et balises superflues du contenu">
+                <i class="fas fa-broom"></i> Nettoyer le HTML
             </button>
             {% endif %}
         </div>
@@ -108,6 +135,8 @@
 {% if art %}
 <form id="deleteForm" method="POST" action="{{ url_for('help.delete', art_id=art.id) }}"
       onsubmit="return confirm('Supprimer cet article ?');"></form>
+<form id="cleanForm" method="POST" action="{{ url_for('help.clean_html', art_id=art.id) }}"
+      onsubmit="return confirm('Nettoyer le HTML du contenu ? Les modifications non enregistrées de ce formulaire seront perdues.');"></form>
 {% endif %}
 
 <!-- Media picker modal -->
@@ -124,7 +153,7 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('pickerUpload').click()">
                         <i class="fas fa-upload"></i> Téléverser
                     </button>
-                    <input type="file" id="pickerUpload" style="display:none" onchange="pickerUploadFile(this.files)">
+                    <input type="file" id="pickerUpload" accept="image/*,video/*" style="display:none" onchange="pickerUploadFile(this.files)">
                 </div>
                 <div class="picker-grid" id="pickerGrid"><div class="text-muted">Chargement…</div></div>
             </div>
@@ -136,6 +165,23 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
 <script>
+// Custom blot: uploaded videos as a native <video controls> player.
+const BlockEmbed = Quill.import('blots/block/embed');
+class SopVideoBlot extends BlockEmbed {
+    static blotName = 'sopvideo';
+    static tagName = 'video';
+    static create(url) {
+        const node = super.create();
+        node.setAttribute('src', url);
+        node.setAttribute('controls', '');
+        node.setAttribute('preload', 'metadata');
+        node.style.maxWidth = '100%';
+        return node;
+    }
+    static value(node) { return node.getAttribute('src'); }
+}
+Quill.register(SopVideoBlot);
+
 const quill = new Quill('#editor', {
     theme: 'snow',
     modules: {
@@ -145,10 +191,10 @@ const quill = new Quill('#editor', {
                 [{ header: [2, 3, 4, false] }],
                 ['bold', 'italic', 'underline'],
                 [{ list: 'ordered' }, { list: 'bullet' }],
-                ['link', 'image'],
+                ['link', 'image', 'video'],
                 ['clean'],
             ],
-            handlers: { image: openMediaPicker },
+            handlers: { image: openMediaPicker, video: openMediaPicker },
         },
     },
 });
@@ -206,18 +252,20 @@ async function loadPicker(q) {
     grid.innerHTML = '<div class="text-muted">Chargement…</div>';
     const resp = await fetch('/media/api/list?q=' + encodeURIComponent(q));
     const data = await resp.json();
-    const imgs = data.assets.filter(a => a.is_image);
-    if (!imgs.length) { grid.innerHTML = '<div class="text-muted">Aucun média.</div>'; return; }
-    grid.innerHTML = imgs.map(a => `
-        <div class="picker-item" onclick="insertMedia('${a.url}')">
-            <img src="${a.url}" loading="lazy">
-            <div class="pname" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</div>
+    const assets = data.assets.filter(a => a.is_image || a.is_video);
+    if (!assets.length) { grid.innerHTML = '<div class="text-muted">Aucun média.</div>'; return; }
+    grid.innerHTML = assets.map(a => `
+        <div class="picker-item" onclick="insertMedia('${a.url}', ${a.is_video ? 'true' : 'false'})">
+            ${a.is_video
+                ? `<div class="d-flex align-items-center justify-content-center" style="height:90px;background:#1a1a1a;color:#fff;"><i class="fas fa-play-circle fa-2x"></i></div>`
+                : `<img src="${a.url}" loading="lazy">`}
+            <div class="pname" title="${escapeHtml(a.filename)}">${a.is_video ? '🎬 ' : ''}${escapeHtml(a.filename)}</div>
         </div>`).join('');
 }
 
-function insertMedia(url) {
+function insertMedia(url, isVideo) {
     const range = lastRange || { index: quill.getLength() };
-    quill.insertEmbed(range.index, 'image', url, 'user');
+    quill.insertEmbed(range.index, isVideo ? 'sopvideo' : 'image', url, 'user');
     quill.setSelection(range.index + 1);
     pickerModal.hide();
 }
@@ -229,7 +277,7 @@ async function pickerUploadFile(files) {
     const resp = await fetch('/media/upload', { method: 'POST', body: fd });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) { alert(data.error || 'Erreur'); return; }
-    if (data.assets && data.assets[0]) insertMedia(data.assets[0].url);
+    if (data.assets && data.assets[0]) insertMedia(data.assets[0].url, data.assets[0].is_video);
 }
 
 let pt = null;

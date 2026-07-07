@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Statistiques · SOP{% endblock %}
+{% block page_title %}Statistiques{% endblock %}
+{% block page_subtitle %}Visites, lectures, recherches et revues des SOP{% endblock %}
+
+{% block head %}
+<style>
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .kpi { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px 16px; }
+    .kpi .n { font-size: 26px; font-weight: 700; color: var(--pim-primary); line-height: 1.1; }
+    .kpi .l { font-size: 12px; color: var(--pim-text-muted); }
+    .stat-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+    .stat-card h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; color: var(--pim-heading); }
+    .stat-card table { font-size: 13px; }
+    .cover-bar { background: var(--pim-bg-subtle); border-radius: 6px; height: 8px; min-width: 90px; overflow: hidden; }
+    .cover-bar > div { height: 100%; background: var(--pim-primary); }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="get" class="d-flex align-items-center gap-2 mb-3">
+    <label class="text-muted" style="font-size:13px;">Période</label>
+    <select name="days" class="form-select form-select-sm" style="max-width: 160px;" onchange="this.form.submit()">
+        {% for d, lbl in [(7, '7 jours'), (30, '30 jours'), (90, '90 jours'), (365, '1 an')] %}
+        <option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ lbl }}</option>
+        {% endfor %}
+    </select>
+</form>
+
+<div class="kpi-row">
+    <div class="kpi"><div class="n">{{ visits }}</div><div class="l">Visites (pages)</div></div>
+    <div class="kpi"><div class="n">{{ active_users }}</div><div class="l">Utilisateurs actifs</div></div>
+    <div class="kpi"><div class="n">{{ total_views }}</div><div class="l">Lectures de SOP</div></div>
+    <div class="kpi"><div class="n">{{ searches }}</div><div class="l">Recherches</div></div>
+    <div class="kpi"><div class="n">{{ zero_searches }}</div><div class="l">Recherches sans résultat</div></div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="stat-card">
+            <h2><i class="fas fa-eye"></i> SOP les plus consultés</h2>
+            {% if top_views %}
+            <div class="table-scroll">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr class="text-muted"><th>SOP</th><th class="text-end">Vues</th><th class="text-end">Lecteurs</th></tr></thead>
+                <tbody>
+                {% for art, n, uniq in top_views %}
+                <tr>
+                    <td><a href="{{ url_for('help.article', slug=art.slug) }}">{{ art.title }}</a>
+                        <span class="text-muted" style="font-size:11px;">· {{ art.category }}</span></td>
+                    <td class="text-end">{{ n }}</td>
+                    <td class="text-end">{{ uniq }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}<p class="text-muted mb-0">Aucune vue enregistrée sur la période.</p>{% endif %}
+        </div>
+
+        <div class="stat-card">
+            <h2><i class="fas fa-search-minus"></i> Recherches sans résultat</h2>
+            <p class="text-muted" style="font-size:12px;">Ce que vos équipes cherchent et ne trouvent pas — des SOP à écrire ?</p>
+            {% if zero_rows %}
+            <div class="table-scroll">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr class="text-muted"><th>Requête</th><th class="text-end">Fois</th><th class="text-end">Dernière</th></tr></thead>
+                <tbody>
+                {% for q, n, last in zero_rows %}
+                <tr><td>« {{ q }} »</td><td class="text-end">{{ n }}</td>
+                    <td class="text-end text-muted">{{ last.strftime('%d/%m') if last.strftime is defined else last }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}<p class="text-muted mb-0">Aucune recherche sans résultat. 🎉</p>{% endif %}
+        </div>
+
+        <div class="stat-card">
+            <h2><i class="fas fa-search"></i> Recherches récentes</h2>
+            {% if recent_searches %}
+            <div class="table-scroll">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr class="text-muted"><th>Requête</th><th>Par</th><th class="text-end">Résultats</th><th class="text-end">Quand</th></tr></thead>
+                <tbody>
+                {% for s in recent_searches %}
+                <tr>
+                    <td>« {{ s.query_text }} »</td>
+                    <td class="text-muted">{{ s.user.display_name if s.user else '—' }}</td>
+                    <td class="text-end {% if s.results_count == 0 %}text-danger fw-bold{% endif %}">{{ s.results_count }}</td>
+                    <td class="text-end text-muted">{{ s.created_at.strftime('%d/%m %H:%M') }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}<p class="text-muted mb-0">Aucune recherche sur la période.</p>{% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="stat-card">
+            <h2><i class="fas fa-user-check"></i> Lectures confirmées (version actuelle)</h2>
+            <p class="text-muted" style="font-size:12px;">{{ total_users }} utilisateurs rattachés à la marque. Les SOP les moins lus d'abord.</p>
+            {% if coverage %}
+            <div class="table-scroll">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr class="text-muted"><th>SOP</th><th style="width:120px;"></th><th class="text-end">Lu</th></tr></thead>
+                <tbody>
+                {% for art, ok, total in coverage[:25] %}
+                <tr>
+                    <td><a href="{{ url_for('help.article', slug=art.slug) }}">{{ art.title }}</a></td>
+                    <td><div class="cover-bar"><div style="width: {{ (ok * 100 / total) | round(0) if total else 0 }}%"></div></div></td>
+                    <td class="text-end">{{ ok }}/{{ total }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}<p class="text-muted mb-0">Aucun SOP publié.</p>{% endif %}
+        </div>
+
+        <div class="stat-card">
+            <h2><i class="fas fa-calendar-times"></i> Revues en retard</h2>
+            {% if overdue %}
+            <div class="table-scroll">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr class="text-muted"><th>SOP</th><th>Responsable</th><th class="text-end">Revue prévue</th></tr></thead>
+                <tbody>
+                {% for art in overdue %}
+                <tr>
+                    <td><a href="{{ url_for('help.article', slug=art.slug) }}">{{ art.title }}</a></td>
+                    <td class="text-muted">{{ art.owner.display_name if art.owner else '—' }}</td>
+                    <td class="text-end text-danger">{{ art.review_due.strftime('%d/%m/%Y') }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}<p class="text-muted mb-0">Aucune revue en retard. 🎉</p>{% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

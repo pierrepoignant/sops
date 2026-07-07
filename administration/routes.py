@@ -317,3 +317,115 @@ def groups_delete(group_id):
 @login_required
 def my_modules():
     return jsonify(modules=sorted(user_modules(current_user)))
+
+
+# --- SOP statistics ---
+
+@administration_bp.route('/stats')
+@login_required
+@admin_required
+def stats():
+    """Visits, SOP views, searches (incl. zero-result), read coverage and
+    overdue reviews for the active brand, over the selected period."""
+    from flask import g
+    from help.models import (HelpArticle, SopArticleView, SopSearchLog,
+                             SopRead, SopVersion)
+    from help.routes import _brand_users
+
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+    try:
+        days = max(1, min(365, int(request.args.get('days') or 30)))
+    except ValueError:
+        days = 30
+    since = datetime.utcnow() - timedelta(days=days)
+
+    # KPIs
+    visits = UserVisit.query.filter(UserVisit.visited_at >= since).count()
+    active_users = (db.session.query(func.count(func.distinct(UserVisit.user_id)))
+                    .filter(UserVisit.visited_at >= since).scalar() or 0)
+    brand_article_ids = [a.id for a in
+                         HelpArticle.query.filter_by(brand=brand)
+                         .with_entities(HelpArticle.id)]
+    views_q = SopArticleView.query.filter(SopArticleView.created_at >= since)
+    if brand_article_ids:
+        views_q = views_q.filter(SopArticleView.article_id.in_(brand_article_ids))
+    total_views = views_q.count()
+    searches = (SopSearchLog.query
+                .filter(SopSearchLog.brand == brand,
+                        SopSearchLog.created_at >= since).count())
+    zero_searches = (SopSearchLog.query
+                     .filter(SopSearchLog.brand == brand,
+                             SopSearchLog.created_at >= since,
+                             SopSearchLog.results_count == 0).count())
+
+    # Top viewed SOPs
+    top_views = []
+    if brand_article_ids:
+        rows = (db.session.query(SopArticleView.article_id,
+                                 func.count(SopArticleView.id),
+                                 func.count(func.distinct(SopArticleView.user_id)))
+                .filter(SopArticleView.created_at >= since,
+                        SopArticleView.article_id.in_(brand_article_ids))
+                .group_by(SopArticleView.article_id)
+                .order_by(func.count(SopArticleView.id).desc())
+                .limit(20).all())
+        arts = {a.id: a for a in HelpArticle.query.filter(
+            HelpArticle.id.in_([r[0] for r in rows]))} if rows else {}
+        top_views = [(arts.get(aid), n, uniq) for aid, n, uniq in rows
+                     if arts.get(aid)]
+
+    # Zero-result searches, aggregated
+    zero_rows = (db.session.query(func.lower(SopSearchLog.query_text),
+                                  func.count(SopSearchLog.id),
+                                  func.max(SopSearchLog.created_at))
+                 .filter(SopSearchLog.brand == brand,
+                         SopSearchLog.created_at >= since,
+                         SopSearchLog.results_count == 0)
+                 .group_by(func.lower(SopSearchLog.query_text))
+                 .order_by(func.count(SopSearchLog.id).desc())
+                 .limit(30).all())
+
+    # Recent searches
+    recent_searches = (SopSearchLog.query
+                       .filter(SopSearchLog.brand == brand,
+                               SopSearchLog.created_at >= since)
+                       .order_by(SopSearchLog.id.desc()).limit(30).all())
+
+    # Read coverage: % of brand users having acked the current version.
+    users = _brand_users(brand)
+    user_ids = {u.id for u in users}
+    coverage = []
+    published = (HelpArticle.query
+                 .filter_by(brand=brand, is_published=True)
+                 .order_by(HelpArticle.department, HelpArticle.title).all())
+    latest_versions = dict(
+        db.session.query(SopVersion.article_id,
+                         func.max(SopVersion.version_no))
+        .group_by(SopVersion.article_id).all())
+    acks_by_article = {}
+    for r in SopRead.query.all():
+        if r.user_id in user_ids:
+            best = acks_by_article.setdefault(r.article_id, {})
+            best[r.user_id] = max(best.get(r.user_id, 0), r.version_no)
+    for a in published:
+        current_vno = latest_versions.get(a.id, 0)
+        acks = acks_by_article.get(a.id, {})
+        ok = sum(1 for vno in acks.values() if vno >= current_vno)
+        coverage.append((a, ok, len(users)))
+    coverage.sort(key=lambda row: (row[1] / row[2]) if row[2] else 0)
+
+    # Overdue reviews
+    today = datetime.utcnow().date()
+    overdue = (HelpArticle.query
+               .filter(HelpArticle.brand == brand,
+                       HelpArticle.review_due.isnot(None),
+                       HelpArticle.review_due < today)
+               .order_by(HelpArticle.review_due).all())
+
+    return render_template(
+        'administration/stats.html', days=days,
+        visits=visits, active_users=active_users, total_views=total_views,
+        searches=searches, zero_searches=zero_searches,
+        top_views=top_views, zero_rows=zero_rows,
+        recent_searches=recent_searches, coverage=coverage,
+        overdue=overdue, total_users=len(users))

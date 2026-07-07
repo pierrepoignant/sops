@@ -44,7 +44,8 @@ def api_list():
     assets = query.limit(200).all()
     return jsonify(assets=[
         {'id': a.id, 'slug': a.slug, 'filename': a.filename,
-         'content_type': a.content_type, 'url': a.url, 'is_image': a.is_image}
+         'content_type': a.content_type, 'url': a.url,
+         'is_image': a.is_image, 'is_video': a.is_video}
         for a in assets
     ])
 
@@ -80,7 +81,7 @@ def upload():
         db.session.flush()
         saved.append({'id': asset.id, 'slug': asset.slug, 'filename': asset.filename,
                       'url': asset.url, 'content_type': asset.content_type,
-                      'is_image': asset.is_image})
+                      'is_image': asset.is_image, 'is_video': asset.is_video})
     db.session.commit()
     return jsonify(ok=True, assets=saved), 201
 

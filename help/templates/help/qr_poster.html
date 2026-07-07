@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR — {{ art.title }}</title>
+    <style>
+        body { font-family: Georgia, 'Times New Roman', serif; margin: 0;
+               display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .poster { text-align: center; padding: 40px; max-width: 640px; }
+        .brand { font-size: 14px; letter-spacing: 3px; text-transform: uppercase; color: #777; }
+        h1 { font-size: 34px; margin: 10px 0 4px; }
+        .cat { font-size: 15px; color: #777; margin-bottom: 28px; }
+        img { width: 340px; height: 340px; }
+        .url { font-size: 13px; color: #555; margin-top: 22px; word-break: break-all; }
+        .hint { font-size: 15px; margin-top: 10px; }
+        .noprint { margin-top: 30px; }
+        @media print { .noprint { display: none; } }
+    </style>
+</head>
+<body>
+    <div class="poster">
+        <div class="brand">{{ brand_name if brand_name is defined else '' }} · SOP{% if dept %} · {{ dept.name }}{% endif %}</div>
+        <h1>{{ art.title }}</h1>
+        <div class="cat">{{ art.category }}</div>
+        <img src="{{ url_for('help.article_qr', slug=art.slug) }}" alt="QR code">
+        <div class="hint">📱 Scannez pour ouvrir la procédure</div>
+        <div class="url">{{ link }}</div>
+        <div class="noprint">
+            <button onclick="window.print()" style="padding: 10px 24px; font-size: 15px; cursor: pointer;">🖨️ Imprimer</button>
+            <a href="{{ url_for('help.article', slug=art.slug) }}" style="margin-left: 12px;">Retour au SOP</a>
+        </div>
+    </div>
+</body>
+</html>

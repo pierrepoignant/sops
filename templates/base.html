@@ -151,6 +151,10 @@
             color: var(--pim-on-primary);
         }
 
+        /* Horizontal-scroll wrapper added around wide tables by the script at
+           the bottom of this page — keeps phones from overflowing sideways. */
+        .table-scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+
         @media (max-width: 768px) {
             .sidebar { transform: translateX(-100%); z-index: 1100; }
             .sidebar.mobile-open { transform: translateX(0); }
@@ -169,11 +173,16 @@
                 font-size: 14px; cursor: pointer; display: block;
             }
             .sidebar-toggle { display: none; }
-            .content-area { padding: 15px; }
-            .page-title { padding: 8px 10px 8px 45px; }
-            .page-title h1 { font-size: 0.9rem; }
-            .header-logo { height: 30px; max-width: 110px; }
-            .header-logo-link { margin-left: 10px; }
+            .content-area { padding: 12px; }
+            .page-title { padding: 10px 12px 10px 45px; flex-wrap: wrap; gap: 6px; }
+            .page-title h1 { font-size: 1.05rem; }
+            .page-title p { font-size: 12px !important; }
+            .header-logo { height: 28px; max-width: 100px; }
+            .header-logo-link { margin-left: 8px; }
+            .page-buttons-container { justify-content: flex-start; }
+            .page-buttons-container .btn { font-size: 12px; }
+            .modal-dialog { margin: 8px; }
+            h1 { overflow-wrap: anywhere; }
         }
         @media (min-width: 769px) {
             .mobile-menu-btn { display: none !important; }
@@ -233,8 +242,9 @@
             {% endfor %}
             {% endif %}
 
-            {% if has_module('administration') or has_module('media') %}
+            {% if has_module('administration') or has_module('media') or can_edit_sops() %}
             {% set admin_endpoints = ('administration.admin_users', 'administration.admin_dashboard',
+                                       'administration.stats',
                                        'administration.groups_list', 'administration.groups_edit') %}
             {% set admin_active = request.endpoint in admin_endpoints or request.blueprint == 'media' or (request.endpoint and (request.endpoint.startswith('help.manage') or request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories'))) %}
             <div class="menu-section-toggle {% if not admin_active %}collapsed{% endif %}" onclick="toggleMenuSection(this)">
@@ -242,12 +252,14 @@
                 <span class="menu-title">Administration</span>
                 <i class="fas fa-chevron-down section-arrow"></i>
             </div>
-            <div class="menu-sub-items {% if not admin_active %}collapsed{% endif %}" style="max-height: 420px;">
-                {% if current_user.is_admin %}
+            <div class="menu-sub-items {% if not admin_active %}collapsed{% endif %}" style="max-height: 460px;">
+                {% if can_edit_sops() %}
                 <a href="{{ url_for('help.manage') }}" class="menu-item {% if request.endpoint and request.endpoint.startswith('help.manage') %}active{% endif %}">
                     <i class="fas fa-book"></i>
                     <span class="menu-title">Gérer les SOP</span>
                 </a>
+                {% endif %}
+                {% if current_user.is_admin %}
                 <a href="{{ url_for('help.departments_manage') }}" class="menu-item {% if request.endpoint and (request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories')) %}active{% endif %}">
                     <i class="fas fa-sitemap"></i>
                     <span class="menu-title">Départements</span>
@@ -267,6 +279,10 @@
                 <a href="{{ url_for('administration.groups_list') }}" class="menu-item {% if request.endpoint in ('administration.groups_list', 'administration.groups_edit') %}active{% endif %}">
                     <i class="fas fa-user-shield"></i>
                     <span class="menu-title">Groupes</span>
+                </a>
+                <a href="{{ url_for('administration.stats') }}" class="menu-item {% if request.endpoint == 'administration.stats' %}active{% endif %}">
+                    <i class="fas fa-chart-line"></i>
+                    <span class="menu-title">Statistiques</span>
                 </a>
                 <a href="{{ url_for('administration.admin_dashboard') }}" class="menu-item {% if request.endpoint == 'administration.admin_dashboard' %}active{% endif %}">
                     <i class="fas fa-chart-bar"></i>
@@ -359,6 +375,15 @@
                 document.getElementById('sidebar').classList.add('collapsed');
                 document.getElementById('mainContent').classList.add('sidebar-collapsed');
             }
+            // Mobile: wrap wide tables in a horizontal-scroll container so
+            // they never stretch the page sideways.
+            document.querySelectorAll('.content-area table').forEach(function (t) {
+                if (t.closest('.table-scroll-wrap, .table-scroll, .ql-editor')) return;
+                var wrap = document.createElement('div');
+                wrap.className = 'table-scroll-wrap';
+                t.parentNode.insertBefore(wrap, t);
+                wrap.appendChild(t);
+            });
         });
     </script>
     {% block scripts %}{% endblock %}

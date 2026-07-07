@@ -2,13 +2,9 @@
 
 {% block title %}{{ art.title }} · SOP{% endblock %}
 {% block page_title %}{{ art.title }}{% endblock %}
-{% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">SOP</a>{% if dept %} · <a href="{{ url_for('help.department', dept_slug=dept.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">{{ dept.name }}</a>{% endif %} · {{ art.category }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">SOP</a>{% if dept %} · <a href="{{ url_for('help.department', dept_slug=dept.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">{{ dept.name }}</a>{% endif %} · {{ art.category }}{% if art.last_reviewed_at %} · <span style="color:var(--pim-text-muted);"><i class="fas fa-check-circle"></i> Vérifié le {{ art.last_reviewed_at.strftime('%d/%m/%Y') }}</span>{% endif %}{% endblock %}
 
-{% block page_buttons %}
-{% if current_user.is_admin %}
-<a href="{{ url_for('help.edit', art_id=art.id) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i> Modifier</a>
-{% endif %}
-{% endblock %}
+{% set can_edit = can_edit_sops(art.department) %}
 
 {% block head %}
 <style>
@@ -18,7 +14,6 @@
         background: white; border: 1px solid var(--pim-border); border-radius: 10px;
         padding: 10px 12px; margin-bottom: 16px;
     }
-    .sop-topnav .spacer { margin-left: auto; }
     .sop-jump { max-height: 60vh; overflow-y: auto; min-width: 280px; }
     .sop-jump .dropdown-header { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--pim-text-muted); }
     .sop-jump .dropdown-item.active { background: var(--pim-primary); color: var(--pim-on-primary); }
@@ -27,6 +22,7 @@
     .article-body h3 { font-size: 17px; margin-top: 18px; }
     .article-body h4 { font-size: 15px; margin-top: 14px; font-weight: 700; }
     .article-body img, .article-body .help-img { max-width: 100%; height: auto; border-radius: 8px; margin: 12px 0; }
+    .article-body video { max-width: 100%; border-radius: 8px; margin: 12px 0; }
     .article-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
     .article-body th, .article-body td { border: 1px solid var(--pim-border); padding: 6px 10px; vertical-align: top; }
     .article-body ul, .article-body ol { padding-left: 22px; }
@@ -37,13 +33,79 @@
     .sop-pager .dir { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--pim-text-muted); }
     .sop-pager .ttl { font-weight: 600; color: var(--pim-link); }
     .sop-pager a.next { text-align: right; margin-left: auto; }
+
+    .sop-tabs { border-bottom: none; margin-bottom: -1px; padding-left: 10px; position: relative; z-index: 1;
+                flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+    .sop-tabs .nav-link { color: var(--pim-text-secondary); font-size: 13px; font-weight: 600;
+                          border-radius: 10px 10px 0 0; padding: 8px 16px; white-space: nowrap; }
+    .sop-tabs .nav-link.active { color: var(--pim-primary); border-color: var(--pim-border) var(--pim-border) white; }
+    .sop-tabs .nav-link .badge { background: var(--pim-bg-subtle); color: var(--pim-text-muted); font-weight: 600; }
+    .sop-file-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px;
+                    border-bottom: 1px solid var(--pim-border-light); flex-wrap: wrap; }
+    .sop-file-row:last-child { border-bottom: none; }
+    .sop-file-row .f-ico { font-size: 22px; color: var(--pim-primary); width: 28px; text-align: center; }
+    .sop-file-row .f-name { font-weight: 600; color: var(--pim-link); text-decoration: none; overflow-wrap: anywhere; }
+    .sop-file-row .f-meta { font-size: 12px; color: var(--pim-text-muted); }
+    .sop-file-row .f-actions { margin-left: auto; }
+    .sop-panel { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 20px 24px; }
+    .sop-panel h3 { font-size: 15px; font-weight: 700; }
+
+    .review-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                     background: white; border: 1px dashed var(--pim-border-strong); border-radius: 10px;
+                     padding: 8px 14px; margin: 12px 0 0; font-size: 13px; color: var(--pim-text-secondary); }
+    .review-banner.overdue { border-color: #dc3545; background: #fdf3f4; }
+    .ack-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+                padding: 14px 18px; margin-top: 16px; }
+    .ack-card .ico { font-size: 22px; }
+
+    .quiz-q { border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+    .quiz-q .qtext { font-weight: 600; margin-bottom: 8px; }
+    .quiz-q .opt { display: block; padding: 4px 0; }
+    .quiz-q .correct { color: #14683a; font-weight: 600; }
+    .quiz-q .expl { font-size: 12px; color: var(--pim-text-muted); margin-top: 6px; }
+
+    .print-footer { display: none; }
+
+    @media (max-width: 768px) {
+        .article-body { padding: 16px 14px; }
+        .sop-panel { padding: 14px; }
+        .sop-pager { flex-direction: column; }
+        .sop-pager a { max-width: 100%; }
+        .sop-pager a.next { text-align: left; margin-left: 0; }
+    }
+
+    @media print {
+        @page { margin: 16mm 14mm; }
+        .sidebar, .mobile-menu-btn, .mobile-overlay, .sidebar-toggle,
+        .sop-topnav, #liveResults, .sop-pager, .sop-tabs,
+        #tab-fichiers, #tab-versions, #tab-quiz, #tab-lectures,
+        .review-banner, .ack-card,
+        #flash-messages-container, .content-area > .alert, .sop-wrap .alert { display: none !important; }
+        #tab-sop { display: block !important; opacity: 1 !important; }
+        .main-content { margin-left: 0 !important; }
+        .content-area { padding: 0 !important; background: white !important; }
+        .page-title { padding: 0 0 10px !important; border-bottom: 2px solid var(--pim-primary); }
+        .page-title h1 { font-size: 22pt; }
+        .header-logo { height: 40px; }
+        .sop-wrap { max-width: none; }
+        .article-body { border: none; border-radius: 0; padding: 14px 0 0; }
+        .article-body h2, .article-body h3 { page-break-after: avoid; }
+        .article-body img, .article-body .help-img { page-break-inside: avoid; max-width: 75%; }
+        .article-body video { display: none; }
+        .article-body table { page-break-inside: auto; }
+        .article-body tr { page-break-inside: avoid; }
+        .article-body a { color: inherit; text-decoration: none; }
+        .print-footer { display: flex !important; align-items: center; gap: 14px;
+                        border-top: 1px solid #bbb; margin-top: 20px; padding-top: 10px;
+                        font-size: 10pt; color: #555; page-break-inside: avoid; }
+        .print-footer img { width: 72px; height: 72px; }
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="sop-wrap">
-    {% include "help/_searchbar.html" %}
-
     <div class="sop-topnav">
         {% if dept %}
         <a href="{{ url_for('help.department', dept_slug=dept.slug) }}" class="btn btn-sm btn-outline-secondary">
@@ -74,42 +136,423 @@
                 {% endfor %}
             </ul>
         </div>
-        <div class="spacer"></div>
-        {% if prev_art %}
-        <a href="{{ url_for('help.article', slug=prev_art.slug) }}" class="btn btn-sm btn-outline-secondary" title="{{ prev_art.title }}">
-            <i class="fas fa-chevron-left"></i> Précédent
-        </a>
-        {% endif %}
-        {% if next_art %}
-        <a href="{{ url_for('help.article', slug=next_art.slug) }}" class="btn btn-sm btn-outline-secondary" title="{{ next_art.title }}">
-            Suivant <i class="fas fa-chevron-right"></i>
+        {% set searchbar_inline = true %}
+        {% include "help/_searchbar.html" %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="QR code"
+                data-bs-toggle="modal" data-bs-target="#qrModal">
+            <i class="fas fa-qrcode"></i>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()">
+            <i class="fas fa-print"></i> Imprimer
+        </button>
+        {% if can_edit %}
+        <a href="{{ url_for('help.edit', art_id=art.id) }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-edit"></i> Modifier
         </a>
         {% endif %}
     </div>
 
-    {% if not art.is_published %}
-    <div class="alert alert-warning py-2"><i class="fas fa-eye-slash"></i> Brouillon (non publié)</div>
-    {% endif %}
-
-    <div class="article-body">
-        {{ art.body_html | safe }}
-    </div>
-
-    {% if prev_art or next_art %}
-    <div class="sop-pager">
-        {% if prev_art %}
-        <a href="{{ url_for('help.article', slug=prev_art.slug) }}" class="prev">
-            <div class="dir"><i class="fas fa-chevron-left"></i> Précédent</div>
-            <div class="ttl">{{ prev_art.title }}</div>
-        </a>
+    {% if can_edit %}
+    <div class="review-banner {% if art.review_overdue %}overdue{% endif %}">
+        <i class="fas fa-clipboard-check"></i>
+        {% if art.last_reviewed_at %}
+        <span>Vérifié le {{ art.last_reviewed_at.strftime('%d/%m/%Y') }}{% if art.last_reviewed_by %} par {{ art.last_reviewed_by.display_name }}{% endif %}.</span>
+        {% else %}
+        <span>Jamais vérifié.</span>
         {% endif %}
-        {% if next_art %}
-        <a href="{{ url_for('help.article', slug=next_art.slug) }}" class="next">
-            <div class="dir">Suivant <i class="fas fa-chevron-right"></i></div>
-            <div class="ttl">{{ next_art.title }}</div>
-        </a>
+        {% if art.review_due %}
+        <span>Prochaine revue : <strong>{{ art.review_due.strftime('%d/%m/%Y') }}</strong>{% if art.review_overdue %} <span class="text-danger fw-bold">— en retard</span>{% endif %}.</span>
         {% endif %}
+        {% if art.owner %}<span>Responsable : {{ art.owner.display_name }}.</span>{% endif %}
+        <form method="post" action="{{ url_for('help.mark_reviewed', art_id=art.id) }}" class="ms-auto">
+            <button class="btn btn-sm btn-outline-success"><i class="fas fa-check"></i> Marquer comme vérifié</button>
+        </form>
     </div>
     {% endif %}
+
+    <ul class="nav nav-tabs sop-tabs mt-3" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-sop" type="button" role="tab">
+                <i class="fas fa-book-open"></i> SOP
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-fichiers" type="button" role="tab">
+                <i class="fas fa-paperclip"></i> Fichiers
+                {% if art.attachments %}<span class="badge rounded-pill">{{ art.attachments | length }}</span>{% endif %}
+            </button>
+        </li>
+        {% if quiz_open or can_edit %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-quiz" type="button" role="tab">
+                <i class="fas fa-graduation-cap"></i> Quiz
+                {% if approved_questions %}<span class="badge rounded-pill">{{ approved_questions | length }}</span>{% endif %}
+            </button>
+        </li>
+        {% endif %}
+        {% if can_edit %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-versions" type="button" role="tab">
+                <i class="fas fa-history"></i> Versions
+                {% if versions %}<span class="badge rounded-pill">{{ versions | length }}</span>{% endif %}
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-lectures" type="button" role="tab">
+                <i class="fas fa-user-check"></i> Lectures
+            </button>
+        </li>
+        {% endif %}
+    </ul>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-sop" role="tabpanel">
+            {% if not art.is_published %}
+            <div class="alert alert-warning py-2 mt-3"><i class="fas fa-eye-slash"></i> Brouillon (non publié)</div>
+            {% endif %}
+
+            <div class="article-body">
+                {{ art.body_html | safe }}
+                <div class="print-footer">
+                    <img src="{{ url_for('help.article_qr', slug=art.slug) }}" alt="QR">
+                    <div>
+                        Version en ligne (peut avoir été mise à jour depuis l'impression) :<br>
+                        <strong>{{ request.url_root.rstrip('/') }}{{ url_for('help.article', slug=art.slug) }}</strong><br>
+                        {% if current_vno %}Version v{{ current_vno }} · {% endif %}Dernière modification : {{ art.updated_at.strftime('%d/%m/%Y') }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="ack-card">
+                {% if ack_current %}
+                <span class="ico text-success"><i class="fas fa-check-circle"></i></span>
+                <div>
+                    <strong>Lecture confirmée</strong>
+                    <div class="text-muted" style="font-size:12px;">le {{ my_ack.created_at.strftime('%d/%m/%Y à %H:%M') }}</div>
+                </div>
+                {% elif my_ack %}
+                <span class="ico text-warning"><i class="fas fa-exclamation-circle"></i></span>
+                <div>
+                    <strong>Ce SOP a été modifié depuis votre dernière lecture</strong>
+                    <div class="text-muted" style="font-size:12px;">dernière confirmation le {{ my_ack.created_at.strftime('%d/%m/%Y') }}</div>
+                </div>
+                <form method="post" action="{{ url_for('help.acknowledge', art_id=art.id) }}" class="ms-auto">
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-check"></i> J'ai lu la nouvelle version</button>
+                </form>
+                {% else %}
+                <span class="ico" style="color:var(--pim-primary);"><i class="fas fa-book-reader"></i></span>
+                <div><strong>Avez-vous lu et compris cette procédure ?</strong></div>
+                <form method="post" action="{{ url_for('help.acknowledge', art_id=art.id) }}" class="ms-auto">
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-check"></i> J'ai lu et compris</button>
+                </form>
+                {% endif %}
+            </div>
+
+            {% if prev_art or next_art %}
+            <div class="sop-pager">
+                {% if prev_art %}
+                <a href="{{ url_for('help.article', slug=prev_art.slug) }}" class="prev">
+                    <div class="dir"><i class="fas fa-chevron-left"></i> Précédent</div>
+                    <div class="ttl">{{ prev_art.title }}</div>
+                </a>
+                {% endif %}
+                {% if next_art %}
+                <a href="{{ url_for('help.article', slug=next_art.slug) }}" class="next">
+                    <div class="dir">Suivant <i class="fas fa-chevron-right"></i></div>
+                    <div class="ttl">{{ next_art.title }}</div>
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="tab-pane fade" id="tab-fichiers" role="tabpanel">
+            <div class="sop-panel mt-3">
+                {% if art.attachments %}
+                {% for att in art.attachments %}
+                <div class="sop-file-row">
+                    <i class="fas {{ att.icon }} f-ico"></i>
+                    <div>
+                        <a class="f-name" href="{{ url_for('help.attachment_download', att_id=att.id) }}">{{ att.filename }}</a>
+                        <div class="f-meta">
+                            {{ att.size_human }} · {{ att.created_at.strftime('%d/%m/%Y') }}
+                            {% if att.uploaded_by %} · {{ att.uploaded_by.display_name }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="f-actions">
+                        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.attachment_download', att_id=att.id) }}" title="Télécharger">
+                            <i class="fas fa-download"></i>
+                        </a>
+                        {% if can_edit %}
+                        <form method="post" action="{{ url_for('help.attachment_delete', att_id=att.id) }}" class="d-inline"
+                              onsubmit="return confirm('Supprimer ce fichier ?');">
+                            <button class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <p class="text-muted mb-0"><i class="fas fa-paperclip"></i> Aucun fichier attaché à ce SOP.</p>
+                {% endif %}
+
+                {% if can_edit %}
+                <hr>
+                {% if storage_ok %}
+                <form method="post" action="{{ url_for('help.attachment_upload', art_id=art.id) }}"
+                      enctype="multipart/form-data" class="d-flex gap-2 align-items-center flex-wrap">
+                    <input type="file" name="files" multiple class="form-control form-control-sm" style="max-width: 420px;">
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-upload"></i> Ajouter</button>
+                </form>
+                {% else %}
+                <p class="text-muted mb-0"><i class="fas fa-exclamation-triangle"></i> Le stockage S3 n'est pas configuré — envoi impossible.</p>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+        {% if quiz_open or can_edit %}
+        <div class="tab-pane fade" id="tab-quiz" role="tabpanel">
+
+            {% if quiz_open %}
+            <div class="sop-panel mt-3">
+                <h3><i class="fas fa-graduation-cap"></i> Testez vos connaissances</h3>
+                {% if my_attempts %}
+                <p class="text-muted" style="font-size:13px;">
+                    Votre dernier essai : <strong>{{ my_attempts[0].score }}/{{ my_attempts[0].total }}</strong>
+                    le {{ my_attempts[0].created_at.strftime('%d/%m/%Y à %H:%M') }} · {{ my_attempts | length }} essai(s) au total.
+                </p>
+                {% endif %}
+                <form method="post" action="{{ url_for('help.quiz_submit', art_id=art.id) }}">
+                    {% for q in approved_questions %}
+                    <div class="quiz-q">
+                        <div class="qtext">{{ loop.index }}. {{ q.question }}</div>
+                        {% for opt in q.options %}
+                        <label class="opt">
+                            <input type="radio" name="q{{ q.id }}" value="{{ loop.index0 }}" required class="form-check-input me-1">
+                            {{ opt }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                    <button class="btn btn-brand"><i class="fas fa-paper-plane"></i> Valider mes réponses</button>
+                </form>
+            </div>
+            {% elif not can_edit %}
+            <div class="sop-panel mt-3">
+                <p class="text-muted mb-0">Aucun quiz disponible pour ce SOP.</p>
+            </div>
+            {% endif %}
+
+            {% if can_edit %}
+            <div class="sop-panel mt-3">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                    <h3 class="mb-0"><i class="fas fa-magic"></i> Préparation du quiz</h3>
+                    {% if quiz and quiz.is_open %}
+                    <span class="badge text-bg-success">ouvert</span>
+                    <form method="post" action="{{ url_for('help.quiz_toggle', art_id=art.id, action='close') }}" class="ms-auto">
+                        <button class="btn btn-sm btn-outline-danger"><i class="fas fa-lock"></i> Fermer le quiz</button>
+                    </form>
+                    {% else %}
+                    <span class="badge text-bg-secondary">fermé</span>
+                    <form method="post" action="{{ url_for('help.quiz_toggle', art_id=art.id, action='open') }}" class="ms-auto">
+                        <button class="btn btn-sm btn-outline-success" {% if not approved_questions %}disabled title="Validez d'abord des questions"{% endif %}>
+                            <i class="fas fa-unlock"></i> Ouvrir le quiz
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+
+                {% if ai_ok %}
+                <form method="post" action="{{ url_for('help.quiz_generate', art_id=art.id) }}"
+                      class="d-flex gap-2 align-items-center flex-wrap mb-3"
+                      onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = 'Génération en cours…';">
+                    <label style="font-size:13px;" class="text-muted">Générer</label>
+                    <input type="number" name="count" value="10" min="1" max="20" class="form-control form-control-sm" style="width: 70px;">
+                    <label style="font-size:13px;" class="text-muted">questions avec l'IA</label>
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-magic"></i> Générer</button>
+                </form>
+                {% else %}
+                <p class="text-muted" style="font-size:13px;"><i class="fas fa-exclamation-triangle"></i>
+                    Clé API Anthropic non configurée (ANTHROPIC__API_KEY) — génération IA indisponible.</p>
+                {% endif %}
+
+                {% if proposed_questions %}
+                <h3 style="font-size:13px;" class="text-muted text-uppercase">À valider ({{ proposed_questions | length }})</h3>
+                {% for q in proposed_questions %}
+                <div class="quiz-q">
+                    <div class="qtext">{{ q.question }}</div>
+                    {% for opt in q.options %}
+                    <span class="opt {% if loop.index0 == q.correct_index %}correct{% endif %}">
+                        {% if loop.index0 == q.correct_index %}<i class="fas fa-check"></i>{% else %}·{% endif %} {{ opt }}
+                    </span>
+                    {% endfor %}
+                    {% if q.explanation %}<div class="expl">{{ q.explanation }}</div>{% endif %}
+                    <div class="d-flex gap-2 mt-2">
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='approve') }}">
+                            <button class="btn btn-sm btn-outline-success"><i class="fas fa-check"></i> Valider</button>
+                        </form>
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='reject') }}">
+                            <button class="btn btn-sm btn-outline-danger"><i class="fas fa-times"></i> Rejeter</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if approved_questions %}
+                <h3 style="font-size:13px;" class="text-muted text-uppercase mt-3">Validées ({{ approved_questions | length }})</h3>
+                {% for q in approved_questions %}
+                <div class="quiz-q">
+                    <div class="qtext">{{ q.question }}</div>
+                    {% for opt in q.options %}
+                    <span class="opt {% if loop.index0 == q.correct_index %}correct{% endif %}">
+                        {% if loop.index0 == q.correct_index %}<i class="fas fa-check"></i>{% else %}·{% endif %} {{ opt }}
+                    </span>
+                    {% endfor %}
+                    {% if q.explanation %}<div class="expl">{{ q.explanation }}</div>{% endif %}
+                    <div class="d-flex gap-2 mt-2">
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='reject') }}">
+                            <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-minus-circle"></i> Retirer</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% elif not proposed_questions %}
+                <p class="text-muted mb-0" style="font-size:13px;">Aucune question pour l'instant — générez-en avec l'IA puis validez celles à garder.</p>
+                {% endif %}
+
+                {% if all_attempts %}
+                <hr>
+                <h3 style="font-size:13px;" class="text-muted text-uppercase">Résultats de l'équipe</h3>
+                <table class="table table-sm align-middle mb-0" style="font-size:13px;">
+                    <thead><tr class="text-muted"><th>Qui</th><th class="text-end">Score</th><th class="text-end">Quand</th></tr></thead>
+                    <tbody>
+                    {% for a in all_attempts %}
+                    <tr>
+                        <td>{{ a.user.display_name if a.user else '—' }}</td>
+                        <td class="text-end"><strong>{{ a.score }}/{{ a.total }}</strong></td>
+                        <td class="text-end text-muted">{{ a.created_at.strftime('%d/%m %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if can_edit %}
+        <div class="tab-pane fade" id="tab-versions" role="tabpanel">
+            <div class="sop-panel mt-3">
+                {% if versions %}
+                <table class="table table-sm align-middle mb-0" style="font-size: 13px;">
+                    <thead>
+                        <tr class="text-muted">
+                            <th style="width:60px;">N°</th>
+                            <th>Date</th>
+                            <th>Par</th>
+                            <th>Titre</th>
+                            <th style="width:250px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for v in versions %}
+                        <tr>
+                            <td><strong>v{{ v.version_no }}</strong></td>
+                            <td>{{ v.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                            <td>{{ v.edited_by.display_name if v.edited_by else '—' }}</td>
+                            <td>{{ v.title }}
+                                {% if loop.first %}<span class="badge text-bg-success">actuelle</span>{% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_view', art_id=art.id, version_no=v.version_no) }}">
+                                    <i class="fas fa-eye"></i> Voir
+                                </a>
+                                {% if v.version_no > 1 %}
+                                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_diff', art_id=art.id, version_no=v.version_no) }}">
+                                    <i class="fas fa-exchange-alt"></i> Différences
+                                </a>
+                                {% endif %}
+                                {% if not loop.first %}
+                                <form method="post" action="{{ url_for('help.version_restore', art_id=art.id, version_no=v.version_no) }}" class="d-inline"
+                                      onsubmit="return confirm('Restaurer la version v{{ v.version_no }} ? La version actuelle reste dans l\'historique.');">
+                                    <button class="btn btn-sm btn-outline-warning" title="Restaurer"><i class="fas fa-undo"></i></button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted mb-0"><i class="fas fa-history"></i> Aucune version enregistrée pour l'instant — l'historique démarre à la prochaine modification.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-lectures" role="tabpanel">
+            <div class="sop-panel mt-3">
+                <p class="text-muted" style="font-size:12px;">
+                    Qui a confirmé la lecture de la version actuelle{% if current_vno %} (v{{ current_vno }}){% endif %}.
+                </p>
+                {% if readers %}
+                <table class="table table-sm align-middle mb-0" style="font-size:13px;">
+                    <thead><tr class="text-muted"><th>Utilisateur</th><th>Dernière confirmation</th><th class="text-end">À jour</th></tr></thead>
+                    <tbody>
+                    {% for u, ack, ok in readers %}
+                    <tr>
+                        <td>{{ u.display_name }}</td>
+                        <td class="text-muted">
+                            {% if ack %}v{{ ack.version_no }} · {{ ack.created_at.strftime('%d/%m/%Y') }}{% else %}—{% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if ok %}<span class="badge text-bg-success"><i class="fas fa-check"></i> oui</span>
+                            {% else %}<span class="badge text-bg-danger">non</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted mb-0">Aucun utilisateur rattaché à la marque.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
 </div>
+
+<!-- QR modal -->
+<div class="modal fade" id="qrModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 380px;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-qrcode"></i> QR code du SOP</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img src="{{ url_for('help.article_qr', slug=art.slug) }}" alt="QR code" style="width: 220px; height: 220px;">
+                <p class="text-muted mt-2 mb-3" style="font-size:12px;">Scannez pour ouvrir ce SOP sur un téléphone.
+                    Collez l'affiche près du poste de travail concerné.</p>
+                <a class="btn btn-sm btn-brand" href="{{ url_for('help.article_qr_poster', slug=art.slug) }}" target="_blank">
+                    <i class="fas fa-print"></i> Imprimer l'affiche
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Open a tab directly via URL hash (#fichiers / #quiz / #versions / #lectures).
+document.addEventListener('DOMContentLoaded', function () {
+    const map = {'#fichiers': '#tab-fichiers', '#quiz': '#tab-quiz',
+                 '#versions': '#tab-versions', '#lectures': '#tab-lectures'};
+    const target = map[window.location.hash];
+    if (!target) return;
+    const btn = document.querySelector(`.sop-tabs [data-bs-target="${target}"]`);
+    if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+});
+</script>
 {% endblock %}

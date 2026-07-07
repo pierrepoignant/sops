@@ -78,3 +78,232 @@ class HelpArticle(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow,
                            onupdate=datetime.utcnow, nullable=False)
+    # Review cycle: who owns the SOP, when it was last verified, and when the
+    # next review is due. Columns added post-launch — see _upgrade_schema().
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    review_due = db.Column(db.Date, nullable=True)
+    last_reviewed_at = db.Column(db.DateTime, nullable=True)
+    last_reviewed_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                    nullable=True)
+
+    owner = db.relationship('User', foreign_keys=[owner_id])
+    last_reviewed_by = db.relationship('User', foreign_keys=[last_reviewed_by_id])
+
+    @property
+    def review_overdue(self):
+        return bool(self.review_due and self.review_due < datetime.utcnow().date())
+
+
+class SopAttachment(db.Model):
+    """A file attached to one SOP. Bytes live in S3 (same bucket as the media
+    library, under sops/attachments/); this row is metadata + the S3 key."""
+    __tablename__ = 'sop_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(120), nullable=False,
+                             default='application/octet-stream')
+    s3_key = db.Column(db.String(512), nullable=False)
+    size = db.Column(db.Integer, default=0)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('attachments', cascade='all, delete-orphan',
+                           lazy='selectin', order_by='SopAttachment.created_at'))
+    uploaded_by = db.relationship('User')
+
+    @property
+    def size_human(self):
+        s = float(self.size or 0)
+        for unit in ('o', 'Ko', 'Mo', 'Go'):
+            if s < 1024:
+                return f'{s:.0f} {unit}'
+            s /= 1024
+        return f'{s:.0f} To'
+
+    @property
+    def icon(self):
+        ct = (self.content_type or '').lower()
+        name = (self.filename or '').lower()
+        if ct.startswith('image/'):
+            return 'fa-file-image'
+        if 'pdf' in ct:
+            return 'fa-file-pdf'
+        if 'sheet' in ct or 'excel' in ct or name.endswith(('.xls', '.xlsx', '.csv')):
+            return 'fa-file-excel'
+        if 'word' in ct or name.endswith(('.doc', '.docx')):
+            return 'fa-file-word'
+        if ct.startswith('video/'):
+            return 'fa-file-video'
+        return 'fa-file-alt'
+
+
+class SopVersion(db.Model):
+    """Immutable snapshot of a SOP taken at each save (v1 = state at creation,
+    or the pre-edit state for articles older than versioning)."""
+    __tablename__ = 'sop_versions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    version_no = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    category = db.Column(db.String(160), nullable=False, default='Général')
+    body_html = db.Column(_BODY, nullable=False, default='')
+    edited_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('versions', cascade='all, delete-orphan',
+                           lazy='selectin', order_by='SopVersion.version_no'))
+    edited_by = db.relationship('User')
+
+    __table_args__ = (
+        db.UniqueConstraint('article_id', 'version_no', name='uq_version_art_no'),
+    )
+
+
+class SopEditor(db.Model):
+    """Grants a non-admin user edit rights over one (brand, department)."""
+    __tablename__ = 'sop_editors'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
+                        index=True)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    department = db.Column(db.String(80), nullable=False)
+
+    user = db.relationship('User', backref=db.backref('sop_editor_roles',
+                                                      cascade='all, delete-orphan'))
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'brand', 'department',
+                            name='uq_editor_user_brand_dept'),
+    )
+
+
+class SopRead(db.Model):
+    """One 'lu et approuvé' acknowledgment: the user confirms having read the
+    article at the given version. A new version requires a new ack."""
+    __tablename__ = 'sop_reads'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
+                        index=True)
+    version_no = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('reads', cascade='all, delete-orphan', lazy='dynamic'))
+    user = db.relationship('User')
+
+
+class SopArticleView(db.Model):
+    """One page view of a SOP by a user — feeds the admin stats."""
+    __tablename__ = 'sop_article_views'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False,
+                           index=True)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('views', cascade='all, delete-orphan', lazy='dynamic'))
+    user = db.relationship('User')
+
+
+class SopSearchLog(db.Model):
+    """One search (deduped while the user is still typing) — feeds the admin
+    stats, in particular the zero-result queries."""
+    __tablename__ = 'sop_search_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    # Named query_text: an attribute called `query` would shadow Model.query.
+    query_text = db.Column(db.String(255), nullable=False)
+    results_count = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False,
+                           index=True)
+
+    user = db.relationship('User')
+
+
+class SopQuiz(db.Model):
+    """Quiz state for one SOP: open (staff can take it) or closed (admins are
+    still preparing/validating questions)."""
+    __tablename__ = 'sop_quizzes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           unique=True, nullable=False)
+    is_open = db.Column(db.Boolean, nullable=False, default=False)
+    opened_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('quiz', cascade='all, delete-orphan', uselist=False))
+
+
+class SopQuizQuestion(db.Model):
+    """One multiple-choice question. AI proposes ('proposed'); an editor
+    validates ('approved') or discards ('rejected'). Only approved questions
+    are served to staff."""
+    __tablename__ = 'sop_quiz_questions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    question = db.Column(db.Text, nullable=False)
+    options_json = db.Column(db.Text, nullable=False)  # JSON list of choices
+    correct_index = db.Column(db.Integer, nullable=False, default=0)
+    explanation = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='proposed',
+                       index=True)  # proposed | approved | rejected
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('quiz_questions', cascade='all, delete-orphan',
+                           lazy='dynamic'))
+
+    @property
+    def options(self):
+        import json
+        try:
+            return json.loads(self.options_json)
+        except (ValueError, TypeError):
+            return []
+
+
+class SopQuizAttempt(db.Model):
+    """One staff run through a SOP's quiz."""
+    __tablename__ = 'sop_quiz_attempts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
+                        index=True)
+    score = db.Column(db.Integer, nullable=False, default=0)
+    total = db.Column(db.Integer, nullable=False, default=0)
+    answers_json = db.Column(db.Text, nullable=False, default='[]')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('quiz_attempts', cascade='all, delete-orphan',
+                           lazy='dynamic'))
+    user = db.relationship('User')

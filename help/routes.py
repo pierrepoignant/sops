@@ -1,17 +1,25 @@
+import difflib
+import json
 import re
 import uuid
 import unicodedata
 from collections import OrderedDict
+from datetime import datetime, date, timedelta
 from functools import wraps
 
 from flask import (render_template, request, jsonify, abort, redirect,
-                   url_for, flash, g)
+                   url_for, flash, g, Response)
 from flask_login import login_required, current_user
 
 from init_db import db
 from help import help_bp
-from help.models import HelpArticle, HelpCategory, SopDepartment
+from help.models import (HelpArticle, HelpCategory, SopDepartment,
+                         SopAttachment, SopVersion, SopEditor, SopRead,
+                         SopArticleView, SopSearchLog, SopQuiz,
+                         SopQuizQuestion, SopQuizAttempt)
+from help.html_clean import clean_article_html
 from help.search import search as run_search, html_to_text
+from media import storage
 
 
 def admin_required(f):
@@ -21,6 +29,56 @@ def admin_required(f):
             abort(403)
         return f(*args, **kwargs)
     return decorated
+
+
+def user_can_edit(user, brand, dept_slug=None):
+    """Admins edit everything. Editors (sop_editors rows) edit their
+    departments; with dept_slug=None, True if they edit any department."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_admin:
+        return True
+    q = SopEditor.query.filter_by(user_id=user.id, brand=brand)
+    if dept_slug is not None:
+        q = q.filter_by(department=dept_slug)
+    return db.session.query(q.exists()).scalar()
+
+
+def editor_required(f):
+    """Admin, or editor of at least one department of the active brand.
+    Department-specific checks happen inside the route via _require_edit."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not user_can_edit(current_user, _brand()):
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _require_edit(dept_slug):
+    if not user_can_edit(current_user, _brand(), dept_slug):
+        abort(403)
+
+
+def _editable_departments(brand):
+    """Departments the current user may manage, in display order."""
+    depts = _departments(brand)
+    if current_user.is_admin:
+        return depts
+    allowed = {e.department for e in
+               SopEditor.query.filter_by(user_id=current_user.id, brand=brand)}
+    return [d for d in depts if d.slug in allowed]
+
+
+def _brand_users(brand):
+    """Users considered part of a brand: their email domain is one of the
+    brand's allowed OAuth/login domains. (Users aren't brand-scoped in the DB,
+    so domain membership is the working definition.)"""
+    from auth.models import User
+    from brands import allowed_domains_for_brand
+    domains = set(allowed_domains_for_brand(brand))
+    return [u for u in User.query.all()
+            if u.email and u.email.rsplit('@', 1)[-1].lower() in domains]
 
 
 def _brand():
@@ -134,6 +192,27 @@ def _dept_counts(brand):
 
 # --- Reader (all authenticated users) ---
 
+def _log_search(q, count):
+    """Record a search for the stats page. While the user is still typing,
+    successive prefixes within a minute update the same row instead of
+    stacking one log entry per keystroke."""
+    brand = _brand()
+    recent = (SopSearchLog.query
+              .filter_by(user_id=current_user.id, brand=brand)
+              .order_by(SopSearchLog.id.desc()).first())
+    now = datetime.utcnow()
+    if (recent and (now - recent.created_at).total_seconds() < 60
+            and (q.lower().startswith(recent.query_text.lower())
+                 or recent.query_text.lower().startswith(q.lower()))):
+        recent.query_text = q[:255]
+        recent.results_count = count
+        recent.created_at = now
+    else:
+        db.session.add(SopSearchLog(brand=brand, user_id=current_user.id,
+                                    query_text=q[:255], results_count=count))
+    db.session.commit()
+
+
 @help_bp.route('/')
 @login_required
 def index():
@@ -141,6 +220,7 @@ def index():
     q = (request.args.get('q') or '').strip()
     if q:
         results = run_search(q, brand)
+        _log_search(q, len(results))
         return render_template('help/search.html', q=q, results=results)
     depts = _departments(brand)
     counts = _dept_counts(brand)
@@ -154,7 +234,10 @@ def index():
 @login_required
 def api_search():
     q = (request.args.get('q') or '').strip()
-    return jsonify(results=run_search(q, _brand()))
+    results = run_search(q, _brand())
+    if len(q) >= 2:
+        _log_search(q, len(results))
+    return jsonify(results=results)
 
 
 @help_bp.route('/d/<dept_slug>')
@@ -193,27 +276,128 @@ def article(slug):
         i = ids.index(art.id)
         prev_art = flat[i - 1] if i > 0 else None
         next_art = flat[i + 1] if i < len(flat) - 1 else None
+    can_edit = user_can_edit(current_user, brand, art.department)
+
+    # View log (feeds the admin stats).
+    db.session.add(SopArticleView(article_id=art.id, user_id=current_user.id))
+    db.session.commit()
+
+    # Read acknowledgment state for the current user.
+    current_vno = _current_version_no(art)
+    my_ack = (SopRead.query.filter_by(article_id=art.id, user_id=current_user.id)
+              .order_by(SopRead.version_no.desc(), SopRead.id.desc()).first())
+    ack_current = bool(my_ack and my_ack.version_no >= current_vno)
+
+    versions = []
+    readers = []
+    if can_edit:
+        versions = (SopVersion.query.filter_by(article_id=art.id)
+                    .order_by(SopVersion.version_no.desc()).all())
+        readers = _reader_status(art, current_vno)
+
+    # Quiz: staff see it when open; editors always see the management panel.
+    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
+    quiz_questions = (SopQuizQuestion.query.filter_by(article_id=art.id)
+                      .order_by(SopQuizQuestion.id).all())
+    approved_questions = [q for q in quiz_questions if q.status == 'approved']
+    proposed_questions = [q for q in quiz_questions if q.status == 'proposed']
+    quiz_open = bool(quiz and quiz.is_open and approved_questions)
+    my_attempts = (SopQuizAttempt.query
+                   .filter_by(article_id=art.id, user_id=current_user.id)
+                   .order_by(SopQuizAttempt.id.desc()).all())
+    all_attempts = []
+    if can_edit:
+        all_attempts = (SopQuizAttempt.query.filter_by(article_id=art.id)
+                        .order_by(SopQuizAttempt.id.desc()).limit(100).all())
+
     return render_template('help/article.html', art=art, dept=dept, tree=tree,
-                           orphans=orphans, prev_art=prev_art, next_art=next_art)
+                           orphans=orphans, prev_art=prev_art, next_art=next_art,
+                           versions=versions, readers=readers,
+                           current_vno=current_vno, my_ack=my_ack,
+                           ack_current=ack_current,
+                           quiz=quiz, quiz_open=quiz_open,
+                           approved_questions=approved_questions,
+                           proposed_questions=proposed_questions,
+                           my_attempts=my_attempts, all_attempts=all_attempts,
+                           ai_ok=_ai_configured(),
+                           storage_ok=storage.is_configured())
+
+
+def _ai_configured():
+    from help import ai_quiz
+    return ai_quiz.is_configured()
+
+
+def _current_version_no(art):
+    last = (SopVersion.query.filter_by(article_id=art.id)
+            .order_by(SopVersion.version_no.desc()).first())
+    return last.version_no if last else 0
+
+
+def _reader_status(art, current_vno):
+    """[(user, last_ack, up_to_date)] for the brand's users — the read-coverage
+    view editors see on the Lectures tab."""
+    acks = {}
+    for r in (SopRead.query.filter_by(article_id=art.id)
+              .order_by(SopRead.version_no, SopRead.id)):
+        acks[r.user_id] = r  # keeps the highest version per user
+    rows = []
+    for u in sorted(_brand_users(_brand()), key=lambda u: u.display_name.lower()):
+        ack = acks.get(u.id)
+        rows.append((u, ack, bool(ack and ack.version_no >= current_vno)))
+    return rows
+
+
+@help_bp.route('/<int:art_id>/ack', methods=['POST'])
+@login_required
+def acknowledge(art_id):
+    brand = _brand()
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art or not (art.is_published or current_user.is_admin):
+        abort(404)
+    db.session.add(SopRead(article_id=art.id, user_id=current_user.id,
+                           version_no=_current_version_no(art)))
+    db.session.commit()
+    flash('Lecture confirmée — merci !', 'success')
+    return redirect(url_for('help.article', slug=art.slug))
+
+
+@help_bp.route('/<int:art_id>/reviewed', methods=['POST'])
+@login_required
+@editor_required
+def mark_reviewed(art_id):
+    brand = _brand()
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art:
+        abort(404)
+    _require_edit(art.department)
+    art.last_reviewed_at = datetime.utcnow()
+    art.last_reviewed_by_id = current_user.id
+    art.review_due = date.today() + timedelta(days=365)
+    db.session.commit()
+    flash('SOP marqué comme vérifié — prochaine revue dans 12 mois.', 'success')
+    return redirect(url_for('help.article', slug=art.slug))
 
 
 # --- Management (admin only) ---
 
 def _manage_department(brand):
     """Resolve the department being managed (?department=slug), defaulting to
-    the first one. Returns the SopDepartment or None when none exist yet."""
+    the first one the user may edit. Returns the SopDepartment or None."""
+    editable = _editable_departments(brand)
     slug = (request.args.get('department') or '').strip()
     if slug:
-        d = _get_department(slug, brand)
-        if d:
-            return d
-    depts = _departments(brand)
-    return depts[0] if depts else None
+        for d in editable:
+            if d.slug == slug:
+                return d
+        if _get_department(slug, brand):
+            abort(403)
+    return editable[0] if editable else None
 
 
 @help_bp.route('/manage')
 @login_required
-@admin_required
+@editor_required
 def manage():
     brand = _brand()
     dept = _manage_department(brand)
@@ -225,36 +409,56 @@ def manage():
                 .order_by(HelpArticle.sort_order, HelpArticle.title).all())
     tree, orphans = _build_tree(articles, brand, dept.slug)
     return render_template('help/manage.html', dept=dept, tree=tree, orphans=orphans,
-                           total=len(articles), departments=_departments(brand))
+                           total=len(articles),
+                           departments=_editable_departments(brand))
 
 
 @help_bp.route('/new')
 @login_required
-@admin_required
+@editor_required
 def new():
     brand = _brand()
     dept = _manage_department(brand)
     if not dept:
         flash("Créez d'abord un département.", 'warning')
-        return redirect(url_for('help.departments_manage'))
+        return redirect(url_for('help.departments_manage')
+                        if current_user.is_admin else url_for('help.index'))
     preselect = (request.args.get('category') or '').strip()
     return render_template('help/edit.html', art=None, dept=dept,
                            category_options=_category_options(brand, dept.slug),
-                           preselect=preselect)
+                           preselect=preselect,
+                           owner_options=_owner_options(brand, dept.slug))
 
 
 @help_bp.route('/<int:art_id>/edit')
 @login_required
-@admin_required
+@editor_required
 def edit(art_id):
     brand = _brand()
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
+    _require_edit(art.department)
     dept = _get_department(art.department, brand)
     return render_template('help/edit.html', art=art, dept=dept,
                            category_options=_category_options(brand, art.department),
-                           preselect=None)
+                           preselect=None,
+                           owner_options=_owner_options(brand, art.department))
+
+
+def _owner_options(brand, dept_slug):
+    """Candidate SOP owners: admins + editors of the department."""
+    from auth.models import User
+    admins = User.query.filter_by(role='admin').all()
+    editor_ids = [e.user_id for e in SopEditor.query.filter_by(
+        brand=brand, department=dept_slug)]
+    editors = User.query.filter(User.id.in_(editor_ids)).all() if editor_ids else []
+    seen, out = set(), []
+    for u in admins + editors:
+        if u.id not in seen:
+            seen.add(u.id)
+            out.append(u)
+    return sorted(out, key=lambda u: u.display_name.lower())
 
 
 # --- Departments (admin only) ---
@@ -263,11 +467,19 @@ def edit(art_id):
 @login_required
 @admin_required
 def departments_manage():
+    from auth.models import User
     brand = _brand()
     depts = _departments(brand)
     counts = dict(db.session.query(HelpArticle.department, db.func.count(HelpArticle.id))
                   .filter_by(brand=brand).group_by(HelpArticle.department).all())
-    return render_template('help/departments.html', departments=depts, counts=counts)
+    editors_by_dept = {}
+    for e in SopEditor.query.filter_by(brand=brand).all():
+        editors_by_dept.setdefault(e.department, []).append(e)
+    staff_users = sorted(User.query.filter(User.role != 'admin').all(),
+                         key=lambda u: u.display_name.lower())
+    return render_template('help/departments.html', departments=depts,
+                           counts=counts, editors_by_dept=editors_by_dept,
+                           staff_users=staff_users)
 
 
 @help_bp.route('/departments/new', methods=['POST'])
@@ -340,19 +552,20 @@ def department_delete(dept_id):
 
 @help_bp.route('/categories')
 @login_required
-@admin_required
+@editor_required
 def categories():
     brand = _brand()
     dept = _manage_department(brand)
     if not dept:
-        return redirect(url_for('help.departments_manage'))
+        return redirect(url_for('help.departments_manage')
+                        if current_user.is_admin else url_for('help.index'))
     cats = (HelpCategory.query.filter_by(brand=brand, department=dept.slug)
             .order_by(HelpCategory.sort_order, HelpCategory.name).all())
     counts = dict(db.session.query(HelpArticle.category, db.func.count(HelpArticle.id))
                   .filter_by(brand=brand, department=dept.slug)
                   .group_by(HelpArticle.category).all())
     return render_template('help/categories.html', categories=cats, counts=counts,
-                           dept=dept, departments=_departments(brand))
+                           dept=dept, departments=_editable_departments(brand))
 
 
 def _wants_json():
@@ -365,7 +578,7 @@ def _back():
 
 @help_bp.route('/categories/new', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def category_create():
     brand = _brand()
     name = (request.form.get('name') or '').strip()
@@ -374,6 +587,7 @@ def category_create():
     if not dept:
         flash('Département invalide.', 'warning')
         return _back()
+    _require_edit(dept.slug)
     parent_id = request.form.get('parent_id')
     parent = None
     if parent_id:
@@ -401,12 +615,13 @@ def category_create():
 
 @help_bp.route('/categories/<int:cat_id>/update', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def category_update(cat_id):
     brand = _brand()
     cat = HelpCategory.query.filter_by(id=cat_id, brand=brand).first()
     if not cat:
         abort(404)
+    _require_edit(cat.department)
     payload = request.get_json(silent=True) if request.is_json else request.form
     new_name = (payload.get('name') or '').strip()
     if 'sort_order' in payload:
@@ -436,12 +651,13 @@ def category_update(cat_id):
 
 @help_bp.route('/categories/<int:cat_id>/delete', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def category_delete(cat_id):
     brand = _brand()
     cat = HelpCategory.query.filter_by(id=cat_id, brand=brand).first()
     if not cat:
         abort(404)
+    _require_edit(cat.department)
     fallback = 'Général'
     in_use = HelpArticle.query.filter_by(brand=brand, department=cat.department,
                                          category=cat.name).count()
@@ -466,12 +682,13 @@ def category_delete(cat_id):
 
 @help_bp.route('/reorder', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def reorder():
     """Persist the drag-and-drop layout of one department's manage page."""
     brand = _brand()
     data = request.get_json(silent=True) or {}
-    cat_map = {c.id: c for c in HelpCategory.query.filter_by(brand=brand).all()}
+    cat_map = {c.id: c for c in HelpCategory.query.filter_by(brand=brand).all()
+               if user_can_edit(current_user, brand, c.department)}
 
     def as_int(v):
         try:
@@ -504,7 +721,7 @@ def reorder():
 
     for row in data.get('articles', []):
         art = HelpArticle.query.filter_by(id=as_int(row.get('id')), brand=brand).first()
-        if not art:
+        if not art or not user_can_edit(current_user, brand, art.department):
             continue
         cat = cat_map.get(as_int(row.get('category_id')))
         if cat:
@@ -539,12 +756,71 @@ def _save_from_form(art, brand):
     art.search_text = re.sub(r'\s+', ' ', f'{title} {html_to_text(body_html)}').strip()[:60000]
     art.is_published = is_published
     art.sort_order = sort_order
+    # Review cycle fields.
+    owner_id = request.form.get('owner_id')
+    try:
+        art.owner_id = int(owner_id) if owner_id else None
+    except (ValueError, TypeError):
+        art.owner_id = None
+    review_due = (request.form.get('review_due') or '').strip()
+    if review_due:
+        try:
+            art.review_due = datetime.strptime(review_due, '%Y-%m-%d').date()
+        except ValueError:
+            pass
+    else:
+        art.review_due = None
     return art, None
+
+
+def _notify_team(art, editor, is_new):
+    """Email the brand's users that a SOP was created/updated. Opt-in via the
+    'notify_team' checkbox on the edit form; skipped for drafts."""
+    from auth.models import User  # noqa: F401 (User loaded via _brand_users)
+    from auth.email_sender import send_email
+    brand = _brand()
+    recipients = [u.email for u in _brand_users(brand)
+                  if u.id != editor.id and u.last_login]
+    if not recipients:
+        return 0
+    link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
+    verb = 'a été ajoutée' if is_new else 'a été mise à jour'
+    body = (
+        f"Bonjour,\n\n"
+        f"La procédure « {art.title} » ({art.category}) {verb} par "
+        f"{editor.display_name}.\n\n"
+        f"Consultez-la et confirmez votre lecture :\n{link}\n\n"
+        f"— Espace SOP"
+    )
+    subject = f'SOP {"nouvelle" if is_new else "mise à jour"} : {art.title}'
+    try:
+        return send_email(recipients, subject, body, brand_id=brand)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('SOP notification email failed')
+        return 0
+
+
+def _snapshot(art, editor_id, baseline=None):
+    """Append a SopVersion capturing the article's current state, unless it is
+    identical to the latest one. ``baseline`` snapshots a pre-edit state (used
+    the first time an article created before versioning gets edited)."""
+    state = baseline or {'title': art.title, 'category': art.category,
+                         'body_html': art.body_html}
+    last = (SopVersion.query.filter_by(article_id=art.id)
+            .order_by(SopVersion.version_no.desc()).first())
+    if last and (last.title == state['title']
+                 and last.category == state['category']
+                 and last.body_html == state['body_html']):
+        return
+    db.session.add(SopVersion(article_id=art.id,
+                              version_no=(last.version_no + 1) if last else 1,
+                              edited_by_id=editor_id, **state))
 
 
 @help_bp.route('/create', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def create():
     brand = _brand()
     art = HelpArticle()
@@ -552,39 +828,459 @@ def create():
     if err:
         flash(err, 'warning')
         return redirect(url_for('help.new'))
+    _require_edit(art.department)
     art.slug = _unique_slug(art.title)
     db.session.add(art)
+    db.session.flush()
+    _snapshot(art, current_user.id)
     db.session.commit()
+    if request.form.get('notify_team') == 'on' and art.is_published:
+        n = _notify_team(art, current_user, is_new=True)
+        if n:
+            flash(f"L'équipe a été notifiée ({n} destinataires).", 'info')
     flash('SOP créé.', 'success')
     return redirect(url_for('help.article', slug=art.slug))
 
 
 @help_bp.route('/<int:art_id>/update', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def update(art_id):
     brand = _brand()
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
+    _require_edit(art.department)
+    # Articles older than versioning have no v1: snapshot their pre-edit state
+    # first so the diff of this edit has something to compare against.
+    pre_edit = {'title': art.title, 'category': art.category,
+                'body_html': art.body_html}
+    has_versions = SopVersion.query.filter_by(article_id=art.id).count() > 0
     art, err = _save_from_form(art, brand)
     if err:
         flash(err, 'warning')
         return redirect(url_for('help.edit', art_id=art_id))
+    _require_edit(art.department)
+    if not has_versions:
+        _snapshot(art, None, baseline=pre_edit)
+        db.session.flush()
+    _snapshot(art, current_user.id)
     db.session.commit()
+    if request.form.get('notify_team') == 'on' and art.is_published:
+        n = _notify_team(art, current_user, is_new=False)
+        if n:
+            flash(f"L'équipe a été notifiée ({n} destinataires).", 'info')
     flash('SOP mis à jour.', 'success')
     return redirect(url_for('help.article', slug=art.slug))
 
 
+@help_bp.route('/<int:art_id>/clean-html', methods=['POST'])
+@login_required
+@editor_required
+def clean_html(art_id):
+    """One-click cleanup of editor cruft (inline styles, Quill artifacts,
+    spacer paragraphs) in the article body. Versioned like a normal edit."""
+    brand = _brand()
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art:
+        abort(404)
+    _require_edit(art.department)
+    cleaned = clean_article_html(art.body_html)
+    if cleaned == (art.body_html or '').strip():
+        flash('Le HTML de ce SOP est déjà propre.', 'info')
+        return redirect(url_for('help.edit', art_id=art.id))
+    pre_edit = {'title': art.title, 'category': art.category,
+                'body_html': art.body_html}
+    has_versions = SopVersion.query.filter_by(article_id=art.id).count() > 0
+    before = len(art.body_html or '')
+    art.body_html = cleaned
+    art.search_text = re.sub(
+        r'\s+', ' ', f'{art.title} {html_to_text(cleaned)}').strip()[:60000]
+    if not has_versions:
+        _snapshot(art, None, baseline=pre_edit)
+        db.session.flush()
+    _snapshot(art, current_user.id)
+    db.session.commit()
+    flash(f'HTML nettoyé : {before} → {len(cleaned)} caractères.', 'success')
+    return redirect(url_for('help.edit', art_id=art.id))
+
+
 @help_bp.route('/<int:art_id>/delete', methods=['POST'])
 @login_required
-@admin_required
+@editor_required
 def delete(art_id):
     brand = _brand()
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
+    _require_edit(art.department)
+    for att in art.attachments:
+        storage.delete_object(att.s3_key)
     db.session.delete(art)
     db.session.commit()
     flash('SOP supprimé.', 'success')
     return redirect(url_for('help.manage'))
+
+
+# --- Attachments ---
+
+ATTACHMENT_PREFIX = 'sops/attachments/'
+
+
+@help_bp.route('/<int:art_id>/attachments', methods=['POST'])
+@login_required
+@editor_required
+def attachment_upload(art_id):
+    brand = _brand()
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art:
+        abort(404)
+    _require_edit(art.department)
+    if not storage.is_configured():
+        flash("Le stockage S3 n'est pas configuré.", 'warning')
+        return redirect(url_for('help.article', slug=art.slug) + '#fichiers')
+    files = [f for f in request.files.getlist('files') if f and f.filename]
+    if not files:
+        flash('Aucun fichier sélectionné.', 'warning')
+        return redirect(url_for('help.article', slug=art.slug) + '#fichiers')
+    saved = 0
+    for f in files:
+        data = f.read()
+        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else 'bin'
+        key = f'{ATTACHMENT_PREFIX}{art.id}/{uuid.uuid4().hex}.{ext}'
+        try:
+            storage.put_object(key, data, f.mimetype or 'application/octet-stream')
+        except Exception as e:
+            flash(f"Échec de l'envoi de {f.filename} : {e}", 'danger')
+            continue
+        db.session.add(SopAttachment(
+            article_id=art.id, filename=f.filename,
+            content_type=f.mimetype or 'application/octet-stream',
+            s3_key=key, size=len(data), uploaded_by_id=current_user.id))
+        saved += 1
+    db.session.commit()
+    if saved:
+        flash(f'{saved} fichier(s) ajouté(s).', 'success')
+    return redirect(url_for('help.article', slug=art.slug) + '#fichiers')
+
+
+@help_bp.route('/attachments/<int:att_id>/download')
+@login_required
+def attachment_download(att_id):
+    att = db.session.get(SopAttachment, att_id)
+    if not att or att.article.brand != _brand():
+        abort(404)
+    if not att.article.is_published and not current_user.is_admin:
+        abort(404)
+    if not storage.is_configured():
+        abort(503)
+    try:
+        data, content_type = storage.get_object_bytes(att.s3_key)
+    except Exception:
+        abort(404)
+    resp = Response(data, mimetype=content_type or att.content_type)
+    resp.headers['Content-Disposition'] = f'attachment; filename="{att.filename}"'
+    return resp
+
+
+@help_bp.route('/attachments/<int:att_id>/delete', methods=['POST'])
+@login_required
+@editor_required
+def attachment_delete(att_id):
+    att = db.session.get(SopAttachment, att_id)
+    if not att or att.article.brand != _brand():
+        abort(404)
+    _require_edit(att.article.department)
+    slug = att.article.slug
+    storage.delete_object(att.s3_key)
+    db.session.delete(att)
+    db.session.commit()
+    flash('Fichier supprimé.', 'success')
+    return redirect(url_for('help.article', slug=slug) + '#fichiers')
+
+
+# --- Versions ---
+
+def _get_version(art_id, version_no, brand):
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art:
+        abort(404)
+    _require_edit(art.department)
+    ver = SopVersion.query.filter_by(article_id=art.id,
+                                     version_no=version_no).first()
+    if not ver:
+        abort(404)
+    return art, ver
+
+
+@help_bp.route('/<int:art_id>/version/<int:version_no>')
+@login_required
+@editor_required
+def version_view(art_id, version_no):
+    art, ver = _get_version(art_id, version_no, _brand())
+    is_latest = ver.version_no == _current_version_no(art)
+    return render_template('help/version_view.html', art=art, ver=ver,
+                           is_latest=is_latest,
+                           dept=_get_department(art.department))
+
+
+@help_bp.route('/<int:art_id>/version/<int:version_no>/restore', methods=['POST'])
+@login_required
+@editor_required
+def version_restore(art_id, version_no):
+    art, ver = _get_version(art_id, version_no, _brand())
+    if ver.version_no == _current_version_no(art):
+        flash('Cette version est déjà la version actuelle.', 'info')
+        return redirect(url_for('help.article', slug=art.slug) + '#versions')
+    art.title = ver.title
+    art.category = ver.category
+    art.body_html = ver.body_html
+    art.search_text = re.sub(
+        r'\s+', ' ', f'{ver.title} {html_to_text(ver.body_html)}').strip()[:60000]
+    _snapshot(art, current_user.id)
+    db.session.commit()
+    flash(f'Version v{ver.version_no} restaurée (enregistrée comme nouvelle version).',
+          'success')
+    return redirect(url_for('help.article', slug=art.slug) + '#versions')
+
+
+def _diff_segments(old_text, new_text, context=20):
+    """Word-level diff as [(op, text)] with op in eq/del/ins; long equal runs
+    are collapsed to their edges with an ellipsis."""
+    old_w, new_w = old_text.split(), new_text.split()
+    segs = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, old_w, new_w, autojunk=False).get_opcodes():
+        if op == 'equal':
+            words = old_w[i1:i2]
+            if len(words) > context * 2 + 5:
+                segs.append(('eq', ' '.join(words[:context])))
+                segs.append(('skip', ''))
+                segs.append(('eq', ' '.join(words[-context:])))
+            else:
+                segs.append(('eq', ' '.join(words)))
+        else:
+            if op in ('replace', 'delete'):
+                segs.append(('del', ' '.join(old_w[i1:i2])))
+            if op in ('replace', 'insert'):
+                segs.append(('ins', ' '.join(new_w[j1:j2])))
+    return segs
+
+
+@help_bp.route('/<int:art_id>/version/<int:version_no>/diff')
+@login_required
+@editor_required
+def version_diff(art_id, version_no):
+    brand = _brand()
+    art, ver = _get_version(art_id, version_no, brand)
+    try:
+        from_no = int(request.args.get('from', version_no - 1))
+    except (TypeError, ValueError):
+        from_no = version_no - 1
+    prev = (SopVersion.query.filter_by(article_id=art.id, version_no=from_no)
+            .first()) if from_no >= 1 else None
+    old_text = html_to_text(prev.body_html) if prev else ''
+    new_text = html_to_text(ver.body_html)
+    segments = _diff_segments(re.sub(r'\s+', ' ', old_text).strip(),
+                              re.sub(r'\s+', ' ', new_text).strip())
+    changed = any(op in ('del', 'ins') for op, _ in segments)
+    return render_template('help/version_diff.html', art=art, ver=ver, prev=prev,
+                           segments=segments, changed=changed,
+                           dept=_get_department(art.department))
+
+
+# --- QR codes ---
+
+def _article_or_404(slug, brand):
+    art = HelpArticle.query.filter_by(slug=slug, brand=brand).first()
+    if not art or not (art.is_published or
+                       user_can_edit(current_user, brand, art.department)):
+        abort(404)
+    return art
+
+
+@help_bp.route('/article/<slug>/qr.svg')
+@login_required
+def article_qr(slug):
+    import segno
+    art = _article_or_404(slug, _brand())
+    link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
+    qr = segno.make(link, error='m')
+    svg = qr.svg_inline(scale=6, dark='#1a1a1a')
+    resp = Response(f'<svg xmlns="http://www.w3.org/2000/svg" '
+                    f'viewBox="0 0 {qr.symbol_size(6)[0]} {qr.symbol_size(6)[1]}">'
+                    f'{svg}</svg>', mimetype='image/svg+xml')
+    resp.headers['Cache-Control'] = 'private, max-age=86400'
+    return resp
+
+
+@help_bp.route('/article/<slug>/qr')
+@login_required
+def article_qr_poster(slug):
+    art = _article_or_404(slug, _brand())
+    link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
+    return render_template('help/qr_poster.html', art=art, link=link,
+                           dept=_get_department(art.department))
+
+
+# --- Training quiz ---
+
+def _quiz_article(art_id, edit=False):
+    art = HelpArticle.query.filter_by(id=art_id, brand=_brand()).first()
+    if not art:
+        abort(404)
+    if edit:
+        _require_edit(art.department)
+    return art
+
+
+@help_bp.route('/<int:art_id>/quiz/generate', methods=['POST'])
+@login_required
+@editor_required
+def quiz_generate(art_id):
+    from help import ai_quiz
+    art = _quiz_article(art_id, edit=True)
+    try:
+        count = max(1, min(20, int(request.form.get('count') or 10)))
+    except ValueError:
+        count = 10
+    existing = SopQuizQuestion.query.filter_by(article_id=art.id).filter(
+        SopQuizQuestion.status != 'rejected').all()
+    try:
+        questions = ai_quiz.generate_questions(art, count=count,
+                                               existing_questions=existing)
+    except RuntimeError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+    for q in questions:
+        db.session.add(SopQuizQuestion(
+            article_id=art.id, question=q['question'],
+            options_json=json.dumps(q['options'], ensure_ascii=False),
+            correct_index=q['correct_index'], explanation=q['explanation']))
+    if not SopQuiz.query.filter_by(article_id=art.id).first():
+        db.session.add(SopQuiz(article_id=art.id))
+    db.session.commit()
+    flash(f'{len(questions)} questions générées — validez celles à garder.',
+          'success')
+    return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+
+
+@help_bp.route('/quiz/questions/<int:q_id>/<action>', methods=['POST'])
+@login_required
+@editor_required
+def quiz_question_action(q_id, action):
+    if action not in ('approve', 'reject', 'delete'):
+        abort(404)
+    q = db.session.get(SopQuizQuestion, q_id)
+    if not q or q.article.brand != _brand():
+        abort(404)
+    _require_edit(q.article.department)
+    slug = q.article.slug
+    if action == 'delete':
+        db.session.delete(q)
+    else:
+        q.status = 'approved' if action == 'approve' else 'rejected'
+    db.session.commit()
+    return redirect(url_for('help.article', slug=slug) + '#quiz')
+
+
+@help_bp.route('/<int:art_id>/quiz/<action>', methods=['POST'])
+@login_required
+@editor_required
+def quiz_toggle(art_id, action):
+    if action not in ('open', 'close'):
+        abort(404)
+    art = _quiz_article(art_id, edit=True)
+    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
+    if not quiz:
+        quiz = SopQuiz(article_id=art.id)
+        db.session.add(quiz)
+    if action == 'open':
+        approved = SopQuizQuestion.query.filter_by(
+            article_id=art.id, status='approved').count()
+        if not approved:
+            flash("Validez au moins une question avant d'ouvrir le quiz.",
+                  'warning')
+            return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+        quiz.is_open = True
+        quiz.opened_at = datetime.utcnow()
+        flash('Quiz ouvert — les employés peuvent maintenant le passer.',
+              'success')
+    else:
+        quiz.is_open = False
+        flash('Quiz fermé.', 'success')
+    db.session.commit()
+    return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+
+
+@help_bp.route('/<int:art_id>/quiz/submit', methods=['POST'])
+@login_required
+def quiz_submit(art_id):
+    art = _quiz_article(art_id)
+    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
+    questions = (SopQuizQuestion.query
+                 .filter_by(article_id=art.id, status='approved')
+                 .order_by(SopQuizQuestion.id).all())
+    if not (quiz and quiz.is_open and questions):
+        flash("Ce quiz n'est pas ouvert.", 'warning')
+        return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+    answers = []
+    graded = []
+    score = 0
+    for q in questions:
+        raw = request.form.get(f'q{q.id}')
+        try:
+            picked = int(raw)
+        except (TypeError, ValueError):
+            picked = -1
+        ok = picked == q.correct_index
+        score += 1 if ok else 0
+        answers.append(picked)
+        graded.append((q, picked, ok))
+    attempt = SopQuizAttempt(article_id=art.id, user_id=current_user.id,
+                             score=score, total=len(questions),
+                             answers_json=json.dumps(answers))
+    db.session.add(attempt)
+    db.session.commit()
+    return render_template('help/quiz_result.html', art=art, graded=graded,
+                           score=score, total=len(questions),
+                           dept=_get_department(art.department))
+
+
+# --- Department editors (admin only) ---
+
+@help_bp.route('/departments/<int:dept_id>/editors', methods=['POST'])
+@login_required
+@admin_required
+def editor_add(dept_id):
+    from auth.models import User
+    brand = _brand()
+    dept = SopDepartment.query.filter_by(id=dept_id, brand=brand).first()
+    if not dept:
+        abort(404)
+    user = db.session.get(User, int(request.form.get('user_id') or 0))
+    if not user:
+        flash('Utilisateur invalide.', 'warning')
+    elif SopEditor.query.filter_by(user_id=user.id, brand=brand,
+                                   department=dept.slug).first():
+        flash(f'{user.display_name} est déjà éditeur de ce département.', 'info')
+    else:
+        db.session.add(SopEditor(user_id=user.id, brand=brand,
+                                 department=dept.slug))
+        db.session.commit()
+        flash(f'{user.display_name} peut maintenant éditer « {dept.name} ».',
+              'success')
+    return redirect(url_for('help.departments_manage'))
+
+
+@help_bp.route('/editors/<int:editor_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def editor_remove(editor_id):
+    ed = db.session.get(SopEditor, editor_id)
+    if not ed or ed.brand != _brand():
+        abort(404)
+    db.session.delete(ed)
+    db.session.commit()
+    flash('Droits d\'édition retirés.', 'success')
+    return redirect(url_for('help.departments_manage'))
