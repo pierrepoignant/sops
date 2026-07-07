@@ -23,7 +23,9 @@
         font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
     }
     .role-badge.admin { background: #fdecef; color: #b02a37; }
+    .role-badge.contributor { background: #fef3e2; color: #92600a; }
     .role-badge.staff { background: #e7f0fd; color: #1a56c4; }
+    .dept-select { font-size: 12px; padding: 3px 22px 3px 8px; border: 1px solid #dee2e6; border-radius: 4px; background: white; max-width: 160px; }
     .status-chip {
         display: inline-block; padding: 2px 8px; border-radius: 10px;
         font-size: 11px; font-weight: 500;
@@ -49,6 +51,7 @@
                         <th>Nom</th>
                         <th>Email</th>
                         <th style="width: 130px;">Rôle</th>
+                        <th style="width: 170px;">Département</th>
                         <th>Statut</th>
                         <th>Dernière connexion</th>
                         <th>Créé le</th>
@@ -56,7 +59,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="7" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> Chargement...</td></tr>
+                    <tr><td colspan="8" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> Chargement...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -91,12 +94,29 @@
                             <input type="text" name="last_name" class="form-control form-control-sm">
                         </div>
                     </div>
-                    <div class="mt-3">
-                        <label class="form-label-sm">Rôle *</label>
-                        <select name="role" class="form-select form-select-sm" required>
-                            <option value="staff" selected>Staff</option>
-                            <option value="admin">Admin</option>
-                        </select>
+                    <div class="row g-2 mt-1">
+                        <div class="col-6">
+                            <label class="form-label-sm">Rôle *</label>
+                            <select name="role" class="form-select form-select-sm" required>
+                                <option value="staff" selected>Staff</option>
+                                <option value="contributor">Contributeur</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label-sm">Département</label>
+                            <select name="department" class="form-select form-select-sm">
+                                <option value="">—</option>
+                                {% for d in departments %}
+                                <option value="{{ d.slug }}">{{ d.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-text" style="font-size: 11px;">
+                        Staff : lit, confirme ses lectures, passe les quiz ·
+                        Contributeur : édite les SOP de son département ·
+                        Admin : tout.
                     </div>
                     <div id="createUserError" class="alert alert-danger py-2 px-3 mt-3 mb-0" style="display:none; font-size:13px;"></div>
                 </div>
@@ -116,6 +136,9 @@
 <script>
 const API_DATA = "{{ url_for('administration.admin_users_data') }}";
 const CURRENT_USER_ID = {{ current_user.id }};
+const DEPARTMENTS = [
+    {% for d in departments %}{ slug: {{ d.slug | tojson }}, name: {{ d.name | tojson }} },{% endfor %}
+];
 
 const createUserModalEl = document.getElementById('createUserModal');
 const createUserModal = new bootstrap.Modal(createUserModalEl);
@@ -135,6 +158,7 @@ createUserForm.addEventListener('submit', async (e) => {
         first_name: fd.get('first_name'),
         last_name: fd.get('last_name'),
         role: fd.get('role'),
+        department: fd.get('department'),
     };
     const errBox = document.getElementById('createUserError');
     errBox.style.display = 'none';
@@ -162,7 +186,7 @@ function loadUsers() {
     fetch(API_DATA).then(r => r.json()).then(data => {
         const body = document.getElementById('usersBody');
         if (!data.users || !data.users.length) {
-            body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucun utilisateur.</td></tr>';
+            body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Aucun utilisateur.</td></tr>';
             return;
         }
         body.innerHTML = data.users.map(u => {
@@ -171,7 +195,12 @@ function loadUsers() {
                 ? `<span class="role-badge ${u.role}">${u.role}</span>`
                 : `<select class="role-select" onchange="setRole(${u.id}, this)">
                        <option value="staff" ${u.role==='staff'?'selected':''}>Staff</option>
+                       <option value="contributor" ${u.role==='contributor'?'selected':''}>Contributeur</option>
                        <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+                   </select>`;
+            const deptControl = `<select class="dept-select" onchange="setDepartment(${u.id}, this)">
+                       <option value="" ${!u.department?'selected':''}>—</option>
+                       ${DEPARTMENTS.map(d => `<option value="${d.slug}" ${u.department===d.slug?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
                    </select>`;
             const pending = u.last_login === '-';
             const statusChip = pending
@@ -187,6 +216,7 @@ function loadUsers() {
                 <td><strong>${escapeHtml(u.display_name)}</strong></td>
                 <td>${escapeHtml(u.email)}</td>
                 <td>${roleControl}</td>
+                <td>${deptControl}</td>
                 <td>${statusChip}</td>
                 <td>${u.last_login}</td>
                 <td>${u.created_at}</td>
@@ -194,6 +224,23 @@ function loadUsers() {
             </tr>`;
         }).join('');
     });
+}
+
+async function setDepartment(userId, selectEl) {
+    const department = selectEl.value;
+    const previous = selectEl.dataset.previous ?? department;
+    const resp = await fetch(`/administration/users/${userId}/set-department`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ department }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Erreur');
+        selectEl.value = previous;
+        return;
+    }
+    selectEl.dataset.previous = department;
 }
 
 async function setRole(userId, selectEl) {

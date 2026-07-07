@@ -3,7 +3,9 @@ from flask_login import UserMixin
 from datetime import datetime
 
 
-ROLES = ('admin', 'staff')
+# admin: everything · contributor: edits the SOPs of their department ·
+# staff: reads, acknowledges, takes quizzes.
+ROLES = ('admin', 'contributor', 'staff')
 
 
 class User(UserMixin, db.Model):
@@ -14,6 +16,11 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     role = db.Column(db.String(20), nullable=False, default='staff')
+    # Department allocation (SopDepartment slug within the user's brand).
+    # Scopes what a contributor can edit, who is expected to read a SOP, and
+    # who receives change-notification emails. Added post-launch — see
+    # _upgrade_schema().
+    department = db.Column(db.String(80), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     oauth_provider = db.Column(db.String(50))
@@ -24,6 +31,10 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == 'admin'
+
+    @property
+    def is_contributor(self):
+        return self.role == 'contributor'
 
     @property
     def display_name(self):

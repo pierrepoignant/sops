@@ -25,8 +25,14 @@ def admin_required(f):
 @login_required
 @admin_required
 def admin_users():
+    from flask import g
+    from help.models import SopDepartment
     groups = Group.query.order_by(Group.name).all()
-    return render_template('administration/admin_users.html', groups=groups, roles=ROLES)
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+    departments = (SopDepartment.query.filter_by(brand=brand)
+                   .order_by(SopDepartment.sort_order, SopDepartment.name).all())
+    return render_template('administration/admin_users.html', groups=groups,
+                           roles=ROLES, departments=departments)
 
 
 @administration_bp.route('/users/api/data')
@@ -44,6 +50,7 @@ def admin_users_data():
             'email': u.email,
             'display_name': u.display_name,
             'role': u.role,
+            'department': u.department or '',
             'is_admin': u.is_admin,
             'created_at': u.created_at.strftime('%d/%m/%Y %H:%M') if u.created_at else '-',
             'last_login': u.last_login.strftime('%d/%m/%Y %H:%M') if u.last_login else '-',
@@ -84,6 +91,7 @@ def admin_user_create():
         first_name=first_name,
         last_name=last_name,
         role=role,
+        department=(data.get('department') or '').strip() or None,
     )
     db.session.add(user)
     db.session.flush()
@@ -118,6 +126,28 @@ def admin_set_role(user_id):
     user.role = role
     db.session.commit()
     return jsonify(ok=True, role=user.role, is_admin=user.is_admin)
+
+
+@administration_bp.route('/users/<int:user_id>/set-department', methods=['POST'])
+@login_required
+@admin_required
+def admin_set_department(user_id):
+    """Allocate a user to a department (slug of the active brand, or empty to
+    clear). Scopes contributor edit rights, expected readers, notifications."""
+    from flask import g
+    from help.models import SopDepartment
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify(error='Utilisateur introuvable'), 404
+    data = request.get_json(silent=True) or request.form
+    dept_slug = (data.get('department') or '').strip()
+    if dept_slug:
+        brand = getattr(g, 'brand', None) or 'sablesienne'
+        if not SopDepartment.query.filter_by(brand=brand, slug=dept_slug).first():
+            return jsonify(error='Département invalide'), 400
+    user.department = dept_slug or None
+    db.session.commit()
+    return jsonify(ok=True, department=user.department or '')
 
 
 @administration_bp.route('/users/<int:user_id>/delete', methods=['POST'])
@@ -323,49 +353,86 @@ def my_modules():
 
 @administration_bp.route('/stats')
 @login_required
-@admin_required
 def stats():
     """Visits, SOP views, searches (incl. zero-result), read coverage and
-    overdue reviews for the active brand, over the selected period."""
+    overdue reviews over the selected period. Admins see the whole brand;
+    department owners see the numbers for their department(s) only."""
     from flask import g
     from help.models import (HelpArticle, SopArticleView, SopSearchLog,
                              SopRead, SopVersion)
-    from help.routes import _brand_users
+    from help.routes import _brand_users, owned_departments
 
     brand = getattr(g, 'brand', None) or 'sablesienne'
+    is_admin_view = current_user.is_admin
+    scope_depts = None  # None -> every department (admin)
+    if not is_admin_view:
+        owned = owned_departments(current_user, brand)
+        if not owned:
+            abort(403)
+        scope_depts = [d.slug for d in owned]
+
     try:
         days = max(1, min(365, int(request.args.get('days') or 30)))
     except ValueError:
         days = 30
     since = datetime.utcnow() - timedelta(days=days)
 
-    # KPIs
-    visits = UserVisit.query.filter(UserVisit.visited_at >= since).count()
-    active_users = (db.session.query(func.count(func.distinct(UserVisit.user_id)))
-                    .filter(UserVisit.visited_at >= since).scalar() or 0)
-    brand_article_ids = [a.id for a in
-                         HelpArticle.query.filter_by(brand=brand)
-                         .with_entities(HelpArticle.id)]
-    views_q = SopArticleView.query.filter(SopArticleView.created_at >= since)
-    if brand_article_ids:
-        views_q = views_q.filter(SopArticleView.article_id.in_(brand_article_ids))
-    total_views = views_q.count()
-    searches = (SopSearchLog.query
-                .filter(SopSearchLog.brand == brand,
-                        SopSearchLog.created_at >= since).count())
-    zero_searches = (SopSearchLog.query
+    def scoped_articles():
+        q = HelpArticle.query.filter_by(brand=brand)
+        if scope_depts is not None:
+            q = q.filter(HelpArticle.department.in_(scope_depts))
+        return q
+
+    users = _brand_users(brand)
+    users_by_dept = {}
+    for u in users:
+        if u.department:
+            users_by_dept.setdefault(u.department, []).append(u)
+
+    # KPIs (site visits / searches are brand-global -> admin view only)
+    visits = active_users = searches = zero_searches = None
+    zero_rows = []
+    recent_searches = []
+    if is_admin_view:
+        visits = UserVisit.query.filter(UserVisit.visited_at >= since).count()
+        active_users = (db.session.query(
+            func.count(func.distinct(UserVisit.user_id)))
+            .filter(UserVisit.visited_at >= since).scalar() or 0)
+        searches = (SopSearchLog.query
+                    .filter(SopSearchLog.brand == brand,
+                            SopSearchLog.created_at >= since).count())
+        zero_searches = (SopSearchLog.query
+                         .filter(SopSearchLog.brand == brand,
+                                 SopSearchLog.created_at >= since,
+                                 SopSearchLog.results_count == 0).count())
+        zero_rows = (db.session.query(func.lower(SopSearchLog.query_text),
+                                      func.count(SopSearchLog.id),
+                                      func.max(SopSearchLog.created_at))
                      .filter(SopSearchLog.brand == brand,
                              SopSearchLog.created_at >= since,
-                             SopSearchLog.results_count == 0).count())
+                             SopSearchLog.results_count == 0)
+                     .group_by(func.lower(SopSearchLog.query_text))
+                     .order_by(func.count(SopSearchLog.id).desc())
+                     .limit(30).all())
+        recent_searches = (SopSearchLog.query
+                           .filter(SopSearchLog.brand == brand,
+                                   SopSearchLog.created_at >= since)
+                           .order_by(SopSearchLog.id.desc()).limit(30).all())
+
+    scoped_ids = [a.id for a in scoped_articles().with_entities(HelpArticle.id)]
+    views_q = SopArticleView.query.filter(SopArticleView.created_at >= since)
+    if scoped_ids:
+        views_q = views_q.filter(SopArticleView.article_id.in_(scoped_ids))
+    total_views = views_q.count() if scoped_ids else 0
 
     # Top viewed SOPs
     top_views = []
-    if brand_article_ids:
+    if scoped_ids:
         rows = (db.session.query(SopArticleView.article_id,
                                  func.count(SopArticleView.id),
                                  func.count(func.distinct(SopArticleView.user_id)))
                 .filter(SopArticleView.created_at >= since,
-                        SopArticleView.article_id.in_(brand_article_ids))
+                        SopArticleView.article_id.in_(scoped_ids))
                 .group_by(SopArticleView.article_id)
                 .order_by(func.count(SopArticleView.id).desc())
                 .limit(20).all())
@@ -374,29 +441,12 @@ def stats():
         top_views = [(arts.get(aid), n, uniq) for aid, n, uniq in rows
                      if arts.get(aid)]
 
-    # Zero-result searches, aggregated
-    zero_rows = (db.session.query(func.lower(SopSearchLog.query_text),
-                                  func.count(SopSearchLog.id),
-                                  func.max(SopSearchLog.created_at))
-                 .filter(SopSearchLog.brand == brand,
-                         SopSearchLog.created_at >= since,
-                         SopSearchLog.results_count == 0)
-                 .group_by(func.lower(SopSearchLog.query_text))
-                 .order_by(func.count(SopSearchLog.id).desc())
-                 .limit(30).all())
-
-    # Recent searches
-    recent_searches = (SopSearchLog.query
-                       .filter(SopSearchLog.brand == brand,
-                               SopSearchLog.created_at >= since)
-                       .order_by(SopSearchLog.id.desc()).limit(30).all())
-
-    # Read coverage: % of brand users having acked the current version.
-    users = _brand_users(brand)
+    # Read coverage: per SOP, how many of the users allocated to its
+    # department have acknowledged the current version.
     user_ids = {u.id for u in users}
     coverage = []
-    published = (HelpArticle.query
-                 .filter_by(brand=brand, is_published=True)
+    published = (scoped_articles()
+                 .filter_by(is_published=True)
                  .order_by(HelpArticle.department, HelpArticle.title).all())
     latest_versions = dict(
         db.session.query(SopVersion.article_id,
@@ -408,22 +458,25 @@ def stats():
             best = acks_by_article.setdefault(r.article_id, {})
             best[r.user_id] = max(best.get(r.user_id, 0), r.version_no)
     for a in published:
+        expected = users_by_dept.get(a.department, [])
+        expected_ids = {u.id for u in expected}
         current_vno = latest_versions.get(a.id, 0)
         acks = acks_by_article.get(a.id, {})
-        ok = sum(1 for vno in acks.values() if vno >= current_vno)
-        coverage.append((a, ok, len(users)))
-    coverage.sort(key=lambda row: (row[1] / row[2]) if row[2] else 0)
+        ok = sum(1 for uid, vno in acks.items()
+                 if uid in expected_ids and vno >= current_vno)
+        coverage.append((a, ok, len(expected)))
+    coverage.sort(key=lambda row: (row[1] / row[2]) if row[2] else 1.0)
 
     # Overdue reviews
     today = datetime.utcnow().date()
-    overdue = (HelpArticle.query
-               .filter(HelpArticle.brand == brand,
-                       HelpArticle.review_due.isnot(None),
+    overdue = (scoped_articles()
+               .filter(HelpArticle.review_due.isnot(None),
                        HelpArticle.review_due < today)
                .order_by(HelpArticle.review_due).all())
 
     return render_template(
-        'administration/stats.html', days=days,
+        'administration/stats.html', days=days, is_admin_view=is_admin_view,
+        scope_depts=scope_depts,
         visits=visits, active_users=active_users, total_views=total_views,
         searches=searches, zero_searches=zero_searches,
         top_views=top_views, zero_rows=zero_rows,

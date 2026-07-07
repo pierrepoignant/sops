@@ -14,7 +14,7 @@ from flask_login import login_required, current_user
 from init_db import db
 from help import help_bp
 from help.models import (HelpArticle, HelpCategory, SopDepartment,
-                         SopAttachment, SopVersion, SopEditor, SopRead,
+                         SopAttachment, SopVersion, SopRead,
                          SopArticleView, SopSearchLog, SopQuiz,
                          SopQuizQuestion, SopQuizAttempt)
 from help.html_clean import clean_article_html
@@ -32,21 +32,21 @@ def admin_required(f):
 
 
 def user_can_edit(user, brand, dept_slug=None):
-    """Admins edit everything. Editors (sop_editors rows) edit their
-    departments; with dept_slug=None, True if they edit any department."""
+    """Admins edit everything. Contributors edit the SOPs of the department
+    they are allocated to; with dept_slug=None, True if the contributor has a
+    department at all."""
     if not user or not user.is_authenticated:
         return False
     if user.is_admin:
         return True
-    q = SopEditor.query.filter_by(user_id=user.id, brand=brand)
-    if dept_slug is not None:
-        q = q.filter_by(department=dept_slug)
-    return db.session.query(q.exists()).scalar()
+    if getattr(user, 'is_contributor', False) and user.department:
+        return dept_slug is None or user.department == dept_slug
+    return False
 
 
 def editor_required(f):
-    """Admin, or editor of at least one department of the active brand.
-    Department-specific checks happen inside the route via _require_edit."""
+    """Admin, or a contributor with a department. Department-specific checks
+    happen inside the route via _require_edit."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not user_can_edit(current_user, _brand()):
@@ -65,9 +65,25 @@ def _editable_departments(brand):
     depts = _departments(brand)
     if current_user.is_admin:
         return depts
-    allowed = {e.department for e in
-               SopEditor.query.filter_by(user_id=current_user.id, brand=brand)}
-    return [d for d in depts if d.slug in allowed]
+    return [d for d in depts if d.slug == current_user.department]
+
+
+def user_owns_department(user, dept):
+    """Department owners (with admins) manage the department's quiz and see
+    its stats. ``dept`` is a SopDepartment."""
+    if not user or not user.is_authenticated or not dept:
+        return False
+    return user.is_admin or dept.owner_id == user.id
+
+
+def owned_departments(user, brand):
+    """Departments whose stats/quiz this user manages (admin: all)."""
+    if not user or not user.is_authenticated:
+        return []
+    if user.is_admin:
+        return _departments(brand)
+    return (SopDepartment.query.filter_by(brand=brand, owner_id=user.id)
+            .order_by(SopDepartment.sort_order, SopDepartment.name).all())
 
 
 def _brand_users(brand):
@@ -79,6 +95,12 @@ def _brand_users(brand):
     domains = set(allowed_domains_for_brand(brand))
     return [u for u in User.query.all()
             if u.email and u.email.rsplit('@', 1)[-1].lower() in domains]
+
+
+def _dept_users(brand, dept_slug):
+    """Brand users allocated to a department — the expected readers of its
+    SOPs and the audience of its quiz/notifications."""
+    return [u for u in _brand_users(brand) if u.department == dept_slug]
 
 
 def _brand():
@@ -248,8 +270,35 @@ def department(dept_slug):
     if not dept:
         abort(404)
     tree, orphans = _reader_tree(brand, dept.slug)
+
+    # Department quiz: staff take it when open; the owner (or an admin)
+    # prepares it from the Quiz tab.
+    can_manage_quiz = user_owns_department(current_user, dept)
+    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
+    questions = (SopQuizQuestion.query
+                 .filter_by(brand=brand, department=dept.slug)
+                 .order_by(SopQuizQuestion.id).all())
+    approved_questions = [q for q in questions if q.status == 'approved']
+    proposed_questions = [q for q in questions if q.status == 'proposed']
+    quiz_open = bool(quiz and quiz.is_open and approved_questions)
+    my_attempts = (SopQuizAttempt.query
+                   .filter_by(brand=brand, department=dept.slug,
+                              user_id=current_user.id)
+                   .order_by(SopQuizAttempt.id.desc()).all())
+    all_attempts = []
+    if can_manage_quiz:
+        all_attempts = (SopQuizAttempt.query
+                        .filter_by(brand=brand, department=dept.slug)
+                        .order_by(SopQuizAttempt.id.desc()).limit(100).all())
+
     return render_template('help/department.html', dept=dept, tree=tree,
-                           orphans=orphans, departments=_departments(brand))
+                           orphans=orphans, departments=_departments(brand),
+                           can_manage_quiz=can_manage_quiz,
+                           quiz=quiz, quiz_open=quiz_open,
+                           approved_questions=approved_questions,
+                           proposed_questions=proposed_questions,
+                           my_attempts=my_attempts, all_attempts=all_attempts,
+                           ai_ok=_ai_configured())
 
 
 @help_bp.route('/article/<slug>')
@@ -293,33 +342,14 @@ def article(slug):
     if can_edit:
         versions = (SopVersion.query.filter_by(article_id=art.id)
                     .order_by(SopVersion.version_no.desc()).all())
+    if current_user.is_admin:  # Lectures tab is admin-only
         readers = _reader_status(art, current_vno)
-
-    # Quiz: staff see it when open; editors always see the management panel.
-    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
-    quiz_questions = (SopQuizQuestion.query.filter_by(article_id=art.id)
-                      .order_by(SopQuizQuestion.id).all())
-    approved_questions = [q for q in quiz_questions if q.status == 'approved']
-    proposed_questions = [q for q in quiz_questions if q.status == 'proposed']
-    quiz_open = bool(quiz and quiz.is_open and approved_questions)
-    my_attempts = (SopQuizAttempt.query
-                   .filter_by(article_id=art.id, user_id=current_user.id)
-                   .order_by(SopQuizAttempt.id.desc()).all())
-    all_attempts = []
-    if can_edit:
-        all_attempts = (SopQuizAttempt.query.filter_by(article_id=art.id)
-                        .order_by(SopQuizAttempt.id.desc()).limit(100).all())
 
     return render_template('help/article.html', art=art, dept=dept, tree=tree,
                            orphans=orphans, prev_art=prev_art, next_art=next_art,
                            versions=versions, readers=readers,
                            current_vno=current_vno, my_ack=my_ack,
                            ack_current=ack_current,
-                           quiz=quiz, quiz_open=quiz_open,
-                           approved_questions=approved_questions,
-                           proposed_questions=proposed_questions,
-                           my_attempts=my_attempts, all_attempts=all_attempts,
-                           ai_ok=_ai_configured(),
                            storage_ok=storage.is_configured())
 
 
@@ -335,14 +365,15 @@ def _current_version_no(art):
 
 
 def _reader_status(art, current_vno):
-    """[(user, last_ack, up_to_date)] for the brand's users — the read-coverage
-    view editors see on the Lectures tab."""
+    """[(user, last_ack, up_to_date)] for the users allocated to the article's
+    department — the read-coverage view admins see on the Lectures tab."""
     acks = {}
     for r in (SopRead.query.filter_by(article_id=art.id)
               .order_by(SopRead.version_no, SopRead.id)):
         acks[r.user_id] = r  # keeps the highest version per user
+    expected = _dept_users(_brand(), art.department)
     rows = []
-    for u in sorted(_brand_users(_brand()), key=lambda u: u.display_name.lower()):
+    for u in sorted(expected, key=lambda u: u.display_name.lower()):
         ack = acks.get(u.id)
         rows.append((u, ack, bool(ack and ack.version_no >= current_vno)))
     return rows
@@ -447,18 +478,12 @@ def edit(art_id):
 
 
 def _owner_options(brand, dept_slug):
-    """Candidate SOP owners: admins + editors of the department."""
+    """Candidate SOP owners: admins + contributors allocated to the department."""
     from auth.models import User
-    admins = User.query.filter_by(role='admin').all()
-    editor_ids = [e.user_id for e in SopEditor.query.filter_by(
-        brand=brand, department=dept_slug)]
-    editors = User.query.filter(User.id.in_(editor_ids)).all() if editor_ids else []
-    seen, out = set(), []
-    for u in admins + editors:
-        if u.id not in seen:
-            seen.add(u.id)
-            out.append(u)
-    return sorted(out, key=lambda u: u.display_name.lower())
+    out = {u.id: u for u in User.query.filter_by(role='admin').all()}
+    for u in User.query.filter_by(role='contributor', department=dept_slug).all():
+        out[u.id] = u
+    return sorted(out.values(), key=lambda u: u.display_name.lower())
 
 
 # --- Departments (admin only) ---
@@ -467,19 +492,14 @@ def _owner_options(brand, dept_slug):
 @login_required
 @admin_required
 def departments_manage():
-    from auth.models import User
     brand = _brand()
     depts = _departments(brand)
     counts = dict(db.session.query(HelpArticle.department, db.func.count(HelpArticle.id))
                   .filter_by(brand=brand).group_by(HelpArticle.department).all())
-    editors_by_dept = {}
-    for e in SopEditor.query.filter_by(brand=brand).all():
-        editors_by_dept.setdefault(e.department, []).append(e)
-    staff_users = sorted(User.query.filter(User.role != 'admin').all(),
-                         key=lambda u: u.display_name.lower())
+    owner_candidates = sorted(_brand_users(brand),
+                              key=lambda u: u.display_name.lower())
     return render_template('help/departments.html', departments=depts,
-                           counts=counts, editors_by_dept=editors_by_dept,
-                           staff_users=staff_users)
+                           counts=counts, owner_candidates=owner_candidates)
 
 
 @help_bp.route('/departments/new', methods=['POST'])
@@ -524,6 +544,12 @@ def department_update(dept_id):
             dept.sort_order = int(request.form.get('sort_order') or dept.sort_order)
     except (ValueError, TypeError):
         pass
+    if 'owner_id' in request.form:
+        raw = request.form.get('owner_id')
+        try:
+            dept.owner_id = int(raw) if raw else None
+        except (ValueError, TypeError):
+            pass
     db.session.commit()
     flash('Département mis à jour.', 'success')
     return redirect(url_for('help.departments_manage'))
@@ -776,11 +802,11 @@ def _save_from_form(art, brand):
 def _notify_team(art, editor, is_new):
     """Email the brand's users that a SOP was created/updated. Opt-in via the
     'notify_team' checkbox on the edit form; skipped for drafts."""
-    from auth.models import User  # noqa: F401 (User loaded via _brand_users)
     from auth.email_sender import send_email
     brand = _brand()
     recipients = [u.email for u in _brand_users(brand)
-                  if u.id != editor.id and u.last_login]
+                  if u.id != editor.id and u.last_login
+                  and (u.department == art.department or u.is_admin)]
     if not recipients:
         return 0
     link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
@@ -916,6 +942,9 @@ def delete(art_id):
     _require_edit(art.department)
     for att in art.attachments:
         storage.delete_object(att.s3_key)
+    # Quiz questions live at department level; just unlink their source SOP.
+    SopQuizQuestion.query.filter_by(article_id=art.id).update(
+        {SopQuizQuestion.article_id: None}, synchronize_session=False)
     db.session.delete(art)
     db.session.commit()
     flash('SOP supprimé.', 'success')
@@ -1123,85 +1152,94 @@ def article_qr_poster(slug):
                            dept=_get_department(art.department))
 
 
-# --- Training quiz ---
+# --- Training quiz (department-level) ---
 
-def _quiz_article(art_id, edit=False):
-    art = HelpArticle.query.filter_by(id=art_id, brand=_brand()).first()
-    if not art:
+def _quiz_department(dept_slug, manage=False):
+    dept = _get_department(dept_slug, _brand())
+    if not dept:
         abort(404)
-    if edit:
-        _require_edit(art.department)
-    return art
+    if manage and not user_owns_department(current_user, dept):
+        abort(403)
+    return dept
 
 
-@help_bp.route('/<int:art_id>/quiz/generate', methods=['POST'])
+@help_bp.route('/d/<dept_slug>/quiz/generate', methods=['POST'])
 @login_required
-@editor_required
-def quiz_generate(art_id):
+def quiz_generate(dept_slug):
     from help import ai_quiz
-    art = _quiz_article(art_id, edit=True)
+    brand = _brand()
+    dept = _quiz_department(dept_slug, manage=True)
     try:
         count = max(1, min(20, int(request.form.get('count') or 10)))
     except ValueError:
         count = 10
-    existing = SopQuizQuestion.query.filter_by(article_id=art.id).filter(
+    articles = (HelpArticle.query
+                .filter_by(brand=brand, department=dept.slug, is_published=True)
+                .order_by(HelpArticle.sort_order, HelpArticle.title).all())
+    if not articles:
+        flash("Aucun SOP publié dans ce département — rien à générer.", 'warning')
+        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+    existing = SopQuizQuestion.query.filter_by(
+        brand=brand, department=dept.slug).filter(
         SopQuizQuestion.status != 'rejected').all()
     try:
-        questions = ai_quiz.generate_questions(art, count=count,
+        questions = ai_quiz.generate_questions(dept, articles, count=count,
                                                existing_questions=existing)
     except RuntimeError as e:
         flash(str(e), 'danger')
-        return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
+    by_slug = {a.slug: a.id for a in articles}
     for q in questions:
         db.session.add(SopQuizQuestion(
-            article_id=art.id, question=q['question'],
+            brand=brand, department=dept.slug,
+            article_id=by_slug.get(q.get('article_slug')),
+            question=q['question'],
             options_json=json.dumps(q['options'], ensure_ascii=False),
             correct_index=q['correct_index'], explanation=q['explanation']))
-    if not SopQuiz.query.filter_by(article_id=art.id).first():
-        db.session.add(SopQuiz(article_id=art.id))
+    if not SopQuiz.query.filter_by(brand=brand, department=dept.slug).first():
+        db.session.add(SopQuiz(brand=brand, department=dept.slug))
     db.session.commit()
     flash(f'{len(questions)} questions générées — validez celles à garder.',
           'success')
-    return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
 
 
 @help_bp.route('/quiz/questions/<int:q_id>/<action>', methods=['POST'])
 @login_required
-@editor_required
 def quiz_question_action(q_id, action):
     if action not in ('approve', 'reject', 'delete'):
         abort(404)
     q = db.session.get(SopQuizQuestion, q_id)
-    if not q or q.article.brand != _brand():
+    if not q or q.brand != _brand():
         abort(404)
-    _require_edit(q.article.department)
-    slug = q.article.slug
+    _quiz_department(q.department, manage=True)
+    dept_slug = q.department
     if action == 'delete':
         db.session.delete(q)
     else:
         q.status = 'approved' if action == 'approve' else 'rejected'
     db.session.commit()
-    return redirect(url_for('help.article', slug=slug) + '#quiz')
+    return redirect(url_for('help.department', dept_slug=dept_slug) + '#quiz')
 
 
-@help_bp.route('/<int:art_id>/quiz/<action>', methods=['POST'])
+@help_bp.route('/d/<dept_slug>/quiz/<action>', methods=['POST'])
 @login_required
-@editor_required
-def quiz_toggle(art_id, action):
+def quiz_toggle(dept_slug, action):
     if action not in ('open', 'close'):
         abort(404)
-    art = _quiz_article(art_id, edit=True)
-    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
+    brand = _brand()
+    dept = _quiz_department(dept_slug, manage=True)
+    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
     if not quiz:
-        quiz = SopQuiz(article_id=art.id)
+        quiz = SopQuiz(brand=brand, department=dept.slug)
         db.session.add(quiz)
     if action == 'open':
         approved = SopQuizQuestion.query.filter_by(
-            article_id=art.id, status='approved').count()
+            brand=brand, department=dept.slug, status='approved').count()
         if not approved:
             flash("Validez au moins une question avant d'ouvrir le quiz.",
                   'warning')
-            return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+            return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
         quiz.is_open = True
         quiz.opened_at = datetime.utcnow()
         flash('Quiz ouvert — les employés peuvent maintenant le passer.',
@@ -1210,20 +1248,21 @@ def quiz_toggle(art_id, action):
         quiz.is_open = False
         flash('Quiz fermé.', 'success')
     db.session.commit()
-    return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+    return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
 
 
-@help_bp.route('/<int:art_id>/quiz/submit', methods=['POST'])
+@help_bp.route('/d/<dept_slug>/quiz/submit', methods=['POST'])
 @login_required
-def quiz_submit(art_id):
-    art = _quiz_article(art_id)
-    quiz = SopQuiz.query.filter_by(article_id=art.id).first()
+def quiz_submit(dept_slug):
+    brand = _brand()
+    dept = _quiz_department(dept_slug)
+    quiz = SopQuiz.query.filter_by(brand=brand, department=dept.slug).first()
     questions = (SopQuizQuestion.query
-                 .filter_by(article_id=art.id, status='approved')
+                 .filter_by(brand=brand, department=dept.slug, status='approved')
                  .order_by(SopQuizQuestion.id).all())
     if not (quiz and quiz.is_open and questions):
         flash("Ce quiz n'est pas ouvert.", 'warning')
-        return redirect(url_for('help.article', slug=art.slug) + '#quiz')
+        return redirect(url_for('help.department', dept_slug=dept.slug) + '#quiz')
     answers = []
     graded = []
     score = 0
@@ -1237,50 +1276,11 @@ def quiz_submit(art_id):
         score += 1 if ok else 0
         answers.append(picked)
         graded.append((q, picked, ok))
-    attempt = SopQuizAttempt(article_id=art.id, user_id=current_user.id,
+    attempt = SopQuizAttempt(brand=brand, department=dept.slug,
+                             user_id=current_user.id,
                              score=score, total=len(questions),
                              answers_json=json.dumps(answers))
     db.session.add(attempt)
     db.session.commit()
-    return render_template('help/quiz_result.html', art=art, graded=graded,
-                           score=score, total=len(questions),
-                           dept=_get_department(art.department))
-
-
-# --- Department editors (admin only) ---
-
-@help_bp.route('/departments/<int:dept_id>/editors', methods=['POST'])
-@login_required
-@admin_required
-def editor_add(dept_id):
-    from auth.models import User
-    brand = _brand()
-    dept = SopDepartment.query.filter_by(id=dept_id, brand=brand).first()
-    if not dept:
-        abort(404)
-    user = db.session.get(User, int(request.form.get('user_id') or 0))
-    if not user:
-        flash('Utilisateur invalide.', 'warning')
-    elif SopEditor.query.filter_by(user_id=user.id, brand=brand,
-                                   department=dept.slug).first():
-        flash(f'{user.display_name} est déjà éditeur de ce département.', 'info')
-    else:
-        db.session.add(SopEditor(user_id=user.id, brand=brand,
-                                 department=dept.slug))
-        db.session.commit()
-        flash(f'{user.display_name} peut maintenant éditer « {dept.name} ».',
-              'success')
-    return redirect(url_for('help.departments_manage'))
-
-
-@help_bp.route('/editors/<int:editor_id>/delete', methods=['POST'])
-@login_required
-@admin_required
-def editor_remove(editor_id):
-    ed = db.session.get(SopEditor, editor_id)
-    if not ed or ed.brand != _brand():
-        abort(404)
-    db.session.delete(ed)
-    db.session.commit()
-    flash('Droits d\'édition retirés.', 'success')
-    return redirect(url_for('help.departments_manage'))
+    return render_template('help/quiz_result.html', dept=dept, graded=graded,
+                           score=score, total=len(questions))

@@ -54,27 +54,19 @@
                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
             </form>
             <div class="w-100 d-flex align-items-center gap-2 flex-wrap" style="padding-left: 48px; font-size: 13px;">
-                <span class="text-muted"><i class="fas fa-user-edit"></i> Éditeurs :</span>
-                {% for e in editors_by_dept.get(d.slug, []) %}
-                <form method="POST" action="{{ url_for('help.editor_remove', editor_id=e.id) }}" class="d-inline"
-                      onsubmit="return confirm('Retirer les droits d\'édition de {{ e.user.display_name }} ?');">
-                    <span class="badge text-bg-light border">
-                        {{ e.user.display_name }}
-                        <button type="submit" class="btn btn-link p-0 text-danger" style="font-size:11px;" title="Retirer">✕</button>
-                    </span>
-                </form>
-                {% else %}
-                <span class="text-muted">aucun (admins uniquement)</span>
-                {% endfor %}
-                <form method="POST" action="{{ url_for('help.editor_add', dept_id=d.id) }}" class="d-flex gap-1 align-items-center">
-                    <select name="user_id" class="form-select form-select-sm" style="width:auto; max-width:200px;" required>
-                        <option value="" disabled selected>Ajouter un éditeur…</option>
-                        {% for u in staff_users %}
-                        <option value="{{ u.id }}">{{ u.display_name }}</option>
+                <span class="text-muted" title="Gère le quiz du département et voit ses statistiques">
+                    <i class="fas fa-user-tie"></i> Responsable :</span>
+                <form method="POST" action="{{ url_for('help.department_update', dept_id=d.id) }}"
+                      class="d-flex gap-1 align-items-center">
+                    <select name="owner_id" class="form-select form-select-sm" style="width:auto; max-width:240px;">
+                        <option value="">— aucun (admins uniquement) —</option>
+                        {% for u in owner_candidates %}
+                        <option value="{{ u.id }}" {% if d.owner_id == u.id %}selected{% endif %}>{{ u.display_name }}</option>
                         {% endfor %}
                     </select>
-                    <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-plus"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" title="Enregistrer le responsable"><i class="fas fa-save"></i></button>
                 </form>
+                <span class="text-muted">gère le quiz et voit les statistiques du département.</span>
             </div>
         </div>
         {% else %}

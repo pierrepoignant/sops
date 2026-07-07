@@ -5,7 +5,7 @@
 {% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; Départements</a> · SOP {{ brand_name }}{% endblock %}
 
 {% block page_buttons %}
-{% if current_user.is_admin %}
+{% if can_edit_sops(dept.slug) %}
 <a href="{{ url_for('help.manage', department=dept.slug) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-cog"></i> Gérer</a>
 <a href="{{ url_for('help.new', department=dept.slug) }}" class="btn btn-sm btn-brand"><i class="fas fa-plus"></i> Nouveau SOP</a>
 {% endif %}
@@ -21,6 +21,24 @@
     .art-link:last-child { border-bottom: none; }
     .art-link:hover { color: var(--pim-primary); }
     .art-link i { font-size: 11px; margin-right: 8px; color: var(--pim-text-muted); }
+
+    .dept-tabs { border-bottom: 1px solid var(--pim-border); margin-bottom: 16px;
+                 flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+    .dept-tabs .nav-link { color: var(--pim-text-secondary); font-size: 14px; font-weight: 600; white-space: nowrap; }
+    .dept-tabs .nav-link.active { color: var(--pim-primary); }
+    .dept-tabs .nav-link .badge { background: var(--pim-bg-subtle); color: var(--pim-text-muted); font-weight: 600; }
+
+    .sop-panel { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 20px 24px; }
+    .sop-panel h3 { font-size: 15px; font-weight: 700; }
+    .quiz-q { border: 1px solid var(--pim-border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+    .quiz-q .qtext { font-weight: 600; margin-bottom: 8px; }
+    .quiz-q .opt { display: block; padding: 4px 0; }
+    .quiz-q .correct { color: #14683a; font-weight: 600; }
+    .quiz-q .expl { font-size: 12px; color: var(--pim-text-muted); margin-top: 6px; }
+    .quiz-q .src { font-size: 11.5px; color: var(--pim-text-muted); margin-top: 4px; }
+    @media (max-width: 768px) {
+        .sop-panel { padding: 14px; }
+    }
 </style>
 {% endblock %}
 
@@ -28,37 +46,209 @@
 {% include "help/_searchbar.html" %}
 
 <div id="browse">
-    {% macro art_links(arts) %}
-        {% for a in arts %}
-        <a href="{{ url_for('help.article', slug=a.slug) }}" class="art-link">
-            <i class="fas fa-file-alt"></i>{{ a.title }}
-        </a>
-        {% endfor %}
-    {% endmacro %}
-    <div class="row g-3">
-        {% for n in tree %}
-        <div class="col-12 col-lg-6">
-            <div class="cat-card">
-                <h3>{{ n.name }}</h3>
-                {{ art_links(n.articles) }}
-                {% for c in n.children %}
-                <div class="subcat-title">{{ c.name }}</div>
-                {{ art_links(c.articles) }}
+    <ul class="nav nav-tabs dept-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-procedures" type="button" role="tab">
+                <i class="fas fa-book-open"></i> Procédures
+            </button>
+        </li>
+        {% if quiz_open or can_manage_quiz %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-quiz" type="button" role="tab">
+                <i class="fas fa-graduation-cap"></i> Quiz
+                {% if approved_questions %}<span class="badge rounded-pill">{{ approved_questions | length }}</span>{% endif %}
+            </button>
+        </li>
+        {% endif %}
+    </ul>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-procedures" role="tabpanel">
+            {% macro art_links(arts) %}
+                {% for a in arts %}
+                <a href="{{ url_for('help.article', slug=a.slug) }}" class="art-link">
+                    <i class="fas fa-file-alt"></i>{{ a.title }}
+                </a>
                 {% endfor %}
+            {% endmacro %}
+            <div class="row g-3">
+                {% for n in tree %}
+                <div class="col-12 col-lg-6">
+                    <div class="cat-card">
+                        <h3>{{ n.name }}</h3>
+                        {{ art_links(n.articles) }}
+                        {% for c in n.children %}
+                        <div class="subcat-title">{{ c.name }}</div>
+                        {{ art_links(c.articles) }}
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% for o in orphans %}
+                <div class="col-12 col-lg-6">
+                    <div class="cat-card">
+                        <h3>{{ o.name }}</h3>
+                        {{ art_links(o.articles) }}
+                    </div>
+                </div>
+                {% endfor %}
+                {% if not tree and not orphans %}
+                <div class="col-12"><p class="text-muted">Aucun SOP dans ce département pour l'instant.</p></div>
+                {% endif %}
             </div>
         </div>
-        {% endfor %}
-        {% for o in orphans %}
-        <div class="col-12 col-lg-6">
-            <div class="cat-card">
-                <h3>{{ o.name }}</h3>
-                {{ art_links(o.articles) }}
+
+        {% if quiz_open or can_manage_quiz %}
+        <div class="tab-pane fade" id="tab-quiz" role="tabpanel">
+
+            {% if quiz_open %}
+            <div class="sop-panel mb-3" style="max-width: 860px;">
+                <h3><i class="fas fa-graduation-cap"></i> Testez vos connaissances — {{ dept.name }}</h3>
+                <p class="text-muted" style="font-size:13px;">
+                    En cas de mauvaise réponse, la correction vous renvoie vers la procédure à relire.
+                </p>
+                {% if my_attempts %}
+                <p class="text-muted" style="font-size:13px;">
+                    Votre dernier essai : <strong>{{ my_attempts[0].score }}/{{ my_attempts[0].total }}</strong>
+                    le {{ my_attempts[0].created_at.strftime('%d/%m/%Y à %H:%M') }} · {{ my_attempts | length }} essai(s) au total.
+                </p>
+                {% endif %}
+                <form method="post" action="{{ url_for('help.quiz_submit', dept_slug=dept.slug) }}">
+                    {% for q in approved_questions %}
+                    <div class="quiz-q">
+                        <div class="qtext">{{ loop.index }}. {{ q.question }}</div>
+                        {% for opt in q.options %}
+                        <label class="opt">
+                            <input type="radio" name="q{{ q.id }}" value="{{ loop.index0 }}" required class="form-check-input me-1">
+                            {{ opt }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                    <button class="btn btn-brand"><i class="fas fa-paper-plane"></i> Valider mes réponses</button>
+                </form>
             </div>
+            {% elif not can_manage_quiz %}
+            <div class="sop-panel mb-3" style="max-width: 860px;">
+                <p class="text-muted mb-0">Aucun quiz disponible pour ce département.</p>
+            </div>
+            {% endif %}
+
+            {% if can_manage_quiz %}
+            <div class="sop-panel" style="max-width: 860px;">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                    <h3 class="mb-0"><i class="fas fa-magic"></i> Préparation du quiz</h3>
+                    {% if quiz and quiz.is_open %}
+                    <span class="badge text-bg-success">ouvert</span>
+                    <form method="post" action="{{ url_for('help.quiz_toggle', dept_slug=dept.slug, action='close') }}" class="ms-auto">
+                        <button class="btn btn-sm btn-outline-danger"><i class="fas fa-lock"></i> Fermer le quiz</button>
+                    </form>
+                    {% else %}
+                    <span class="badge text-bg-secondary">fermé</span>
+                    <form method="post" action="{{ url_for('help.quiz_toggle', dept_slug=dept.slug, action='open') }}" class="ms-auto">
+                        <button class="btn btn-sm btn-outline-success" {% if not approved_questions %}disabled title="Validez d'abord des questions"{% endif %}>
+                            <i class="fas fa-unlock"></i> Ouvrir le quiz
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+                <p class="text-muted" style="font-size:12px;">
+                    Les questions sont générées à partir de l'ensemble des SOP publiés du département,
+                    chacune reliée à sa procédure source.
+                </p>
+
+                {% if ai_ok %}
+                <form method="post" action="{{ url_for('help.quiz_generate', dept_slug=dept.slug) }}"
+                      class="d-flex gap-2 align-items-center flex-wrap mb-3"
+                      onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').innerHTML = 'Génération en cours…';">
+                    <label style="font-size:13px;" class="text-muted">Générer</label>
+                    <input type="number" name="count" value="10" min="1" max="20" class="form-control form-control-sm" style="width: 70px;">
+                    <label style="font-size:13px;" class="text-muted">questions avec l'IA</label>
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-magic"></i> Générer</button>
+                </form>
+                {% else %}
+                <p class="text-muted" style="font-size:13px;"><i class="fas fa-exclamation-triangle"></i>
+                    Clé API Anthropic non configurée (ANTHROPIC__API_KEY) — génération IA indisponible.</p>
+                {% endif %}
+
+                {% if proposed_questions %}
+                <h3 style="font-size:13px;" class="text-muted text-uppercase">À valider ({{ proposed_questions | length }})</h3>
+                {% for q in proposed_questions %}
+                <div class="quiz-q">
+                    <div class="qtext">{{ q.question }}</div>
+                    {% for opt in q.options %}
+                    <span class="opt {% if loop.index0 == q.correct_index %}correct{% endif %}">
+                        {% if loop.index0 == q.correct_index %}<i class="fas fa-check"></i>{% else %}·{% endif %} {{ opt }}
+                    </span>
+                    {% endfor %}
+                    {% if q.explanation %}<div class="expl">{{ q.explanation }}</div>{% endif %}
+                    {% if q.article %}<div class="src"><i class="fas fa-file-alt"></i>
+                        Source : <a href="{{ url_for('help.article', slug=q.article.slug) }}">{{ q.article.title }}</a></div>{% endif %}
+                    <div class="d-flex gap-2 mt-2">
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='approve') }}">
+                            <button class="btn btn-sm btn-outline-success"><i class="fas fa-check"></i> Valider</button>
+                        </form>
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='reject') }}">
+                            <button class="btn btn-sm btn-outline-danger"><i class="fas fa-times"></i> Rejeter</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if approved_questions %}
+                <h3 style="font-size:13px;" class="text-muted text-uppercase mt-3">Validées ({{ approved_questions | length }})</h3>
+                {% for q in approved_questions %}
+                <div class="quiz-q">
+                    <div class="qtext">{{ q.question }}</div>
+                    {% for opt in q.options %}
+                    <span class="opt {% if loop.index0 == q.correct_index %}correct{% endif %}">
+                        {% if loop.index0 == q.correct_index %}<i class="fas fa-check"></i>{% else %}·{% endif %} {{ opt }}
+                    </span>
+                    {% endfor %}
+                    {% if q.explanation %}<div class="expl">{{ q.explanation }}</div>{% endif %}
+                    {% if q.article %}<div class="src"><i class="fas fa-file-alt"></i>
+                        Source : <a href="{{ url_for('help.article', slug=q.article.slug) }}">{{ q.article.title }}</a></div>{% endif %}
+                    <div class="d-flex gap-2 mt-2">
+                        <form method="post" action="{{ url_for('help.quiz_question_action', q_id=q.id, action='reject') }}">
+                            <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-minus-circle"></i> Retirer</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% elif not proposed_questions %}
+                <p class="text-muted mb-0" style="font-size:13px;">Aucune question pour l'instant — générez-en avec l'IA puis validez celles à garder.</p>
+                {% endif %}
+
+                {% if all_attempts %}
+                <hr>
+                <h3 style="font-size:13px;" class="text-muted text-uppercase">Résultats de l'équipe</h3>
+                <table class="table table-sm align-middle mb-0" style="font-size:13px;">
+                    <thead><tr class="text-muted"><th>Qui</th><th class="text-end">Score</th><th class="text-end">Quand</th></tr></thead>
+                    <tbody>
+                    {% for a in all_attempts %}
+                    <tr>
+                        <td>{{ a.user.display_name if a.user else '—' }}</td>
+                        <td class="text-end"><strong>{{ a.score }}/{{ a.total }}</strong></td>
+                        <td class="text-end text-muted">{{ a.created_at.strftime('%d/%m %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
-        {% endfor %}
-        {% if not tree and not orphans %}
-        <div class="col-12"><p class="text-muted">Aucun SOP dans ce département pour l'instant.</p></div>
         {% endif %}
     </div>
 </div>
+
+<script>
+// Open the quiz tab directly via #quiz (used after quiz actions).
+document.addEventListener('DOMContentLoaded', function () {
+    if (window.location.hash !== '#quiz') return;
+    const btn = document.querySelector('.dept-tabs [data-bs-target="#tab-quiz"]');
+    if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+});
+</script>
 {% endblock %}

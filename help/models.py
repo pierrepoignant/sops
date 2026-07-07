@@ -23,6 +23,12 @@ class SopDepartment(db.Model):
     name = db.Column(db.String(160), nullable=False)
     icon = db.Column(db.String(40), nullable=False, default='fa-folder-open')
     sort_order = db.Column(db.Integer, nullable=False, default=0)
+    # Department owner: with admins, the only one who can manage the
+    # department's training quiz. Column added post-launch — see
+    # _upgrade_schema().
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    owner = db.relationship('User')
 
     __table_args__ = (
         db.UniqueConstraint('brand', 'slug', name='uq_dept_brand_slug'),
@@ -168,25 +174,6 @@ class SopVersion(db.Model):
     )
 
 
-class SopEditor(db.Model):
-    """Grants a non-admin user edit rights over one (brand, department)."""
-    __tablename__ = 'sop_editors'
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
-                        index=True)
-    brand = db.Column(db.String(40), nullable=False, index=True)
-    department = db.Column(db.String(80), nullable=False)
-
-    user = db.relationship('User', backref=db.backref('sop_editor_roles',
-                                                      cascade='all, delete-orphan'))
-
-    __table_args__ = (
-        db.UniqueConstraint('user_id', 'brand', 'department',
-                            name='uq_editor_user_brand_dept'),
-    )
-
-
 class SopRead(db.Model):
     """One 'lu et approuvé' acknowledgment: the user confirms having read the
     article at the given version. A new version requires a new ack."""
@@ -241,31 +228,35 @@ class SopSearchLog(db.Model):
 
 
 class SopQuiz(db.Model):
-    """Quiz state for one SOP: open (staff can take it) or closed (admins are
-    still preparing/validating questions)."""
+    """Quiz state for one (brand, department): open (staff can take it) or
+    closed (the owner is still preparing/validating questions)."""
     __tablename__ = 'sop_quizzes'
 
     id = db.Column(db.Integer, primary_key=True)
-    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
-                           unique=True, nullable=False)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    department = db.Column(db.String(80), nullable=False)
     is_open = db.Column(db.Boolean, nullable=False, default=False)
     opened_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    article = db.relationship(
-        'HelpArticle',
-        backref=db.backref('quiz', cascade='all, delete-orphan', uselist=False))
+    __table_args__ = (
+        db.UniqueConstraint('brand', 'department', name='uq_quiz_brand_dept'),
+    )
 
 
 class SopQuizQuestion(db.Model):
-    """One multiple-choice question. AI proposes ('proposed'); an editor
-    validates ('approved') or discards ('rejected'). Only approved questions
-    are served to staff."""
+    """One multiple-choice question of a department quiz. AI proposes
+    ('proposed'); the department owner validates ('approved') or discards
+    ('rejected'). Only approved questions are served to staff. ``article_id``
+    points at the SOP the question was drawn from, so a wrong answer can link
+    back to the procedure to (re)read."""
     __tablename__ = 'sop_quiz_questions'
 
     id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    department = db.Column(db.String(80), nullable=False, index=True)
     article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
-                           nullable=False, index=True)
+                           nullable=True, index=True)
     question = db.Column(db.Text, nullable=False)
     options_json = db.Column(db.Text, nullable=False)  # JSON list of choices
     correct_index = db.Column(db.Integer, nullable=False, default=0)
@@ -274,10 +265,7 @@ class SopQuizQuestion(db.Model):
                        index=True)  # proposed | approved | rejected
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    article = db.relationship(
-        'HelpArticle',
-        backref=db.backref('quiz_questions', cascade='all, delete-orphan',
-                           lazy='dynamic'))
+    article = db.relationship('HelpArticle')
 
     @property
     def options(self):
@@ -289,12 +277,12 @@ class SopQuizQuestion(db.Model):
 
 
 class SopQuizAttempt(db.Model):
-    """One staff run through a SOP's quiz."""
+    """One staff run through a department's quiz."""
     __tablename__ = 'sop_quiz_attempts'
 
     id = db.Column(db.Integer, primary_key=True)
-    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
-                           nullable=False, index=True)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    department = db.Column(db.String(80), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False,
                         index=True)
     score = db.Column(db.Integer, nullable=False, default=0)
@@ -302,8 +290,4 @@ class SopQuizAttempt(db.Model):
     answers_json = db.Column(db.Text, nullable=False, default='[]')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
-    article = db.relationship(
-        'HelpArticle',
-        backref=db.backref('quiz_attempts', cascade='all, delete-orphan',
-                           lazy='dynamic'))
     user = db.relationship('User')

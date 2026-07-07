@@ -27,9 +27,10 @@ QUESTIONS_SCHEMA = {
                     },
                     'correct_index': {'type': 'integer'},
                     'explanation': {'type': 'string'},
+                    'article_slug': {'type': 'string'},
                 },
                 'required': ['question', 'options', 'correct_index',
-                             'explanation'],
+                             'explanation', 'article_slug'],
                 'additionalProperties': False,
             },
         },
@@ -48,9 +49,11 @@ def _api_key():
     return cfg.get('api_key') or os.environ.get('ANTHROPIC_API_KEY')
 
 
-def generate_questions(article, count=10, existing_questions=None):
-    """Ask Claude for ``count`` multiple-choice questions about the article.
-    Returns a list of dicts {question, options, correct_index, explanation}.
+def generate_questions(dept, articles, count=10, existing_questions=None):
+    """Ask Claude for ``count`` multiple-choice questions covering the
+    department's SOPs. Returns a list of dicts {question, options,
+    correct_index, explanation, article_slug} — article_slug names the SOP
+    the question is drawn from (so a wrong answer can link back to it).
     Raises RuntimeError with a user-displayable message on failure."""
     import anthropic
 
@@ -59,31 +62,43 @@ def generate_questions(article, count=10, existing_questions=None):
         raise RuntimeError("La clé API Anthropic n'est pas configurée "
                            "(ANTHROPIC__API_KEY).")
 
-    body_text = html_to_text(article.body_html)[:30000]
+    # One block per SOP, tagged with its slug for attribution. Budget the
+    # total prompt size across procedures.
+    per_article = max(4000, 120000 // max(1, len(articles)))
+    blocks = []
+    for a in articles:
+        body_text = html_to_text(a.body_html)[:per_article]
+        blocks.append(f'<procedure slug="{a.slug}" titre="{a.title}" '
+                      f'categorie="{a.category}">\n{body_text}\n</procedure>')
+    slugs = ', '.join(a.slug for a in articles)
+
     existing = [q.question for q in (existing_questions or [])]
     existing_block = ''
     if existing:
-        listed = '\n'.join(f'- {q}' for q in existing[:60])
+        listed = '\n'.join(f'- {q}' for q in existing[:80])
         existing_block = (
             "\n\nQuestions déjà proposées — n'en génère PAS de similaires :\n"
             f"{listed}")
 
     prompt = (
-        "Tu prépares un quiz de formation interne pour les employés d'une "
-        "boutique/atelier. À partir de la procédure (SOP) ci-dessous, génère "
-        f"exactement {count} questions à choix multiples en français.\n\n"
+        "Tu prépares un quiz de formation interne pour les employés du "
+        f"département « {dept.name} ». À partir des procédures (SOP) "
+        f"ci-dessous, génère exactement {count} questions à choix multiples "
+        "en français.\n\n"
         "Règles :\n"
-        "- Chaque question teste un point opérationnel concret de la "
-        "procédure (pas de trivia sur la formulation du texte).\n"
+        "- Répartis les questions sur l'ensemble des procédures, en couvrant "
+        "en priorité les points opérationnels les plus importants.\n"
+        "- Chaque question teste un point opérationnel concret (pas de "
+        "trivia sur la formulation du texte).\n"
         "- 4 options par question, une seule correcte, les distracteurs "
         "doivent être plausibles.\n"
         "- Varie la position de la bonne réponse.\n"
         "- L'explication justifie la bonne réponse en une ou deux phrases, "
         "en citant la procédure.\n"
+        "- Le champ article_slug doit contenir le slug EXACT de la procédure "
+        f"dont la question est tirée, parmi : {slugs}\n"
         f"{existing_block}\n\n"
-        f"Titre de la procédure : {article.title}\n"
-        f"Catégorie : {article.category}\n\n"
-        f"Contenu de la procédure :\n{body_text}"
+        + '\n\n'.join(blocks)
     )
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -115,17 +130,20 @@ def generate_questions(article, count=10, existing_questions=None):
     except ValueError:
         raise RuntimeError('Réponse du modèle illisible — réessayez.')
 
+    valid_slugs = {a.slug for a in articles}
     questions = []
     for q in data.get('questions', []):
         options = [str(o) for o in q.get('options', [])]
         ci = q.get('correct_index', 0)
         if len(options) < 2 or not (0 <= ci < len(options)):
             continue
+        slug = str(q.get('article_slug', '')).strip()
         questions.append({
             'question': str(q.get('question', '')).strip(),
             'options': options,
             'correct_index': ci,
             'explanation': str(q.get('explanation', '')).strip(),
+            'article_slug': slug if slug in valid_slugs else None,
         })
     if not questions:
         raise RuntimeError("Le modèle n'a produit aucune question valide.")

@@ -242,23 +242,32 @@
             {% endfor %}
             {% endif %}
 
-            {% if has_module('administration') or has_module('media') or can_edit_sops() %}
+            {# Gérer les SOP: contributors + admins — a working menu, not an
+               admin one, so it lives outside the Administration section. #}
+            {% if can_edit_sops() %}
+            <a href="{{ url_for('help.manage') }}" class="menu-item {% if request.endpoint and request.endpoint.startswith('help.manage') %}active{% endif %}">
+                <i class="fas fa-book"></i>
+                <span class="menu-title">Gérer les SOP</span>
+            </a>
+            {% endif %}
+            {% if can_see_stats() and not current_user.is_admin %}
+            <a href="{{ url_for('administration.stats') }}" class="menu-item {% if request.endpoint == 'administration.stats' %}active{% endif %}">
+                <i class="fas fa-chart-line"></i>
+                <span class="menu-title">Statistiques</span>
+            </a>
+            {% endif %}
+
+            {% if has_module('administration') or has_module('media') or current_user.is_admin %}
             {% set admin_endpoints = ('administration.admin_users', 'administration.admin_dashboard',
                                        'administration.stats',
                                        'administration.groups_list', 'administration.groups_edit') %}
-            {% set admin_active = request.endpoint in admin_endpoints or request.blueprint == 'media' or (request.endpoint and (request.endpoint.startswith('help.manage') or request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories'))) %}
+            {% set admin_active = request.endpoint in admin_endpoints or request.blueprint == 'media' or (request.endpoint and (request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories'))) %}
             <div class="menu-section-toggle {% if not admin_active %}collapsed{% endif %}" onclick="toggleMenuSection(this)">
                 <i class="fas fa-shield-alt section-icon"></i>
                 <span class="menu-title">Administration</span>
                 <i class="fas fa-chevron-down section-arrow"></i>
             </div>
             <div class="menu-sub-items {% if not admin_active %}collapsed{% endif %}" style="max-height: 460px;">
-                {% if can_edit_sops() %}
-                <a href="{{ url_for('help.manage') }}" class="menu-item {% if request.endpoint and request.endpoint.startswith('help.manage') %}active{% endif %}">
-                    <i class="fas fa-book"></i>
-                    <span class="menu-title">Gérer les SOP</span>
-                </a>
-                {% endif %}
                 {% if current_user.is_admin %}
                 <a href="{{ url_for('help.departments_manage') }}" class="menu-item {% if request.endpoint and (request.endpoint.startswith('help.departments') or request.endpoint.startswith('help.categories')) %}active{% endif %}">
                     <i class="fas fa-sitemap"></i>

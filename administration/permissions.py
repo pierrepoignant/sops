@@ -28,8 +28,10 @@ _OPEN_BLUEPRINTS = {'auth', 'static', 'help'}
 
 # Specific endpoints that do their own authentication. Media files are served
 # to any authenticated user so images embedded in help articles always render,
-# even for users without the `media` management module.
-_OPEN_ENDPOINTS = {'media.serve_file'}
+# even for users without the `media` management module. The stats page does
+# its own check because department owners (not module holders) may see their
+# department's numbers.
+_OPEN_ENDPOINTS = {'media.serve_file', 'administration.stats'}
 
 
 def user_has_module_access(user, module_id):

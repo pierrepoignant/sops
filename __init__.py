@@ -11,6 +11,29 @@ from datetime import datetime
 from brands import brand_for_host, get_brand, BRANDS
 
 
+def _drop_legacy_tables():
+    """Drop tables whose shape changed incompatibly, so create_all() can
+    recreate them. Runs BEFORE create_all(). Only the short-lived article-level
+    quiz tables (2026-07-07, replaced the same day by department-level ones)
+    are handled; they carried no production data."""
+    from sqlalchemy import inspect as sqla_inspect, text
+
+    insp = sqla_inspect(db.engine)
+    tables = insp.get_table_names()
+    if 'sop_quizzes' in tables:
+        cols = {c['name'] for c in insp.get_columns('sop_quizzes')}
+        if 'article_id' in cols:  # old article-level schema
+            for t in ('sop_quiz_attempts', 'sop_quiz_questions', 'sop_quizzes'):
+                if t in tables:
+                    db.session.execute(text(f'DROP TABLE {t}'))
+            db.session.commit()
+    # sop_editors (2026-07-07, same-day replacement): superseded by the
+    # 'contributor' role + users.department allocation.
+    if 'sop_editors' in tables:
+        db.session.execute(text('DROP TABLE sop_editors'))
+        db.session.commit()
+
+
 def _upgrade_schema():
     """Additive schema upgrades for existing tables. db.create_all() creates
     missing tables but never adds columns, so columns introduced after launch
@@ -23,6 +46,12 @@ def _upgrade_schema():
             'review_due': 'DATE',
             'last_reviewed_at': 'DATETIME',
             'last_reviewed_by_id': 'INTEGER',
+        },
+        'sop_departments': {
+            'owner_id': 'INTEGER',
+        },
+        'users': {
+            'department': 'VARCHAR(80)',
         },
     }
     insp = sqla_inspect(db.engine)
@@ -176,10 +205,19 @@ def create_app(db_name='ovh', redis_server='localhost'):
             from help.routes import user_can_edit
             return user_can_edit(current_user, brand_id, dept_slug)
 
+        def can_see_stats():
+            """Admins and department owners get the Statistiques page."""
+            from help.routes import owned_departments
+            if not current_user.is_authenticated:
+                return False
+            return current_user.is_admin or bool(
+                owned_departments(current_user, brand_id))
+
         return {
             'has_module': lambda mid: user_has_module_access(current_user, mid),
             'user_modules': lambda: user_modules(current_user),
             'can_edit_sops': can_edit_sops,
+            'can_see_stats': can_see_stats,
             'safe_url_for': safe_url_for,
             'current_brand': brand_id,
             'brand': brand,
@@ -189,6 +227,7 @@ def create_app(db_name='ovh', redis_server='localhost'):
         }
 
     with app.app_context():
+        _drop_legacy_tables()
         db.create_all()
         _upgrade_schema()
 

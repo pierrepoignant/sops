@@ -2,7 +2,7 @@
 
 {% block title %}Statistiques · SOP{% endblock %}
 {% block page_title %}Statistiques{% endblock %}
-{% block page_subtitle %}Visites, lectures, recherches et revues des SOP{% endblock %}
+{% block page_subtitle %}{% if is_admin_view %}Visites, lectures, recherches et revues des SOP{% else %}Lectures, quiz et revues — département(s) : {{ scope_depts | join(', ') }}{% endif %}{% endblock %}
 
 {% block head %}
 <style>
@@ -30,11 +30,15 @@
 </form>
 
 <div class="kpi-row">
+    {% if is_admin_view %}
     <div class="kpi"><div class="n">{{ visits }}</div><div class="l">Visites (pages)</div></div>
     <div class="kpi"><div class="n">{{ active_users }}</div><div class="l">Utilisateurs actifs</div></div>
+    {% endif %}
     <div class="kpi"><div class="n">{{ total_views }}</div><div class="l">Lectures de SOP</div></div>
+    {% if is_admin_view %}
     <div class="kpi"><div class="n">{{ searches }}</div><div class="l">Recherches</div></div>
     <div class="kpi"><div class="n">{{ zero_searches }}</div><div class="l">Recherches sans résultat</div></div>
+    {% endif %}
 </div>
 
 <div class="row g-3">
@@ -60,6 +64,7 @@
             {% else %}<p class="text-muted mb-0">Aucune vue enregistrée sur la période.</p>{% endif %}
         </div>
 
+        {% if is_admin_view %}
         <div class="stat-card">
             <h2><i class="fas fa-search-minus"></i> Recherches sans résultat</h2>
             <p class="text-muted" style="font-size:12px;">Ce que vos équipes cherchent et ne trouvent pas — des SOP à écrire ?</p>
@@ -98,12 +103,13 @@
             </div>
             {% else %}<p class="text-muted mb-0">Aucune recherche sur la période.</p>{% endif %}
         </div>
+        {% endif %}
     </div>
 
     <div class="col-lg-6">
         <div class="stat-card">
             <h2><i class="fas fa-user-check"></i> Lectures confirmées (version actuelle)</h2>
-            <p class="text-muted" style="font-size:12px;">{{ total_users }} utilisateurs rattachés à la marque. Les SOP les moins lus d'abord.</p>
+            <p class="text-muted" style="font-size:12px;">Lecteurs attendus = employés affectés au département du SOP. Les SOP les moins lus d'abord.</p>
             {% if coverage %}
             <div class="table-scroll">
             <table class="table table-sm align-middle mb-0">
