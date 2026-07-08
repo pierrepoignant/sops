@@ -162,12 +162,19 @@ class SopVersion(db.Model):
     body_html = db.Column(_BODY, nullable=False, default='')
     edited_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # Verification: stamped by the department owner (or an admin) when they
+    # check this exact version. Columns added post-launch — see
+    # _upgrade_schema().
+    verified_at = db.Column(db.DateTime, nullable=True)
+    verified_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                               nullable=True)
 
     article = db.relationship(
         'HelpArticle',
         backref=db.backref('versions', cascade='all, delete-orphan',
                            lazy='selectin', order_by='SopVersion.version_no'))
-    edited_by = db.relationship('User')
+    edited_by = db.relationship('User', foreign_keys=[edited_by_id])
+    verified_by = db.relationship('User', foreign_keys=[verified_by_id])
 
     __table_args__ = (
         db.UniqueConstraint('article_id', 'version_no', name='uq_version_art_no'),

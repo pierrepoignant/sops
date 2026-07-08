@@ -340,9 +340,10 @@ def article(slug):
               .order_by(SopRead.version_no.desc(), SopRead.id.desc()).first())
     ack_current = bool(my_ack and my_ack.version_no >= current_vno)
 
+    can_verify = user_owns_department(current_user, dept)
     versions = []
     readers = []
-    if can_edit:
+    if can_edit or can_verify:
         versions = (SopVersion.query.filter_by(article_id=art.id)
                     .order_by(SopVersion.version_no.desc()).all())
     if current_user.is_admin:  # Lectures tab is admin-only
@@ -351,6 +352,7 @@ def article(slug):
     return render_template('help/article.html', art=art, dept=dept, tree=tree,
                            orphans=orphans, prev_art=prev_art, next_art=next_art,
                            versions=versions, readers=readers,
+                           can_verify=can_verify,
                            current_vno=current_vno, my_ack=my_ack,
                            ack_current=ack_current,
                            storage_ok=storage.is_configured())
@@ -398,18 +400,31 @@ def acknowledge(art_id):
 
 @help_bp.route('/<int:art_id>/reviewed', methods=['POST'])
 @login_required
-@editor_required
 def mark_reviewed(art_id):
+    """Verify a SOP — reserved to the department owner and admins. The
+    verification is stamped on the current version, so the Versions tab shows
+    exactly which state was checked and by whom."""
     brand = _brand()
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
-    _require_edit(art.department)
-    art.last_reviewed_at = datetime.utcnow()
+    if not user_owns_department(current_user, _get_department(art.department, brand)):
+        abort(403)
+    # Make sure there is a version to stamp (articles older than versioning
+    # get their current state recorded as v1).
+    if not SopVersion.query.filter_by(article_id=art.id).count():
+        _snapshot(art, None)
+        db.session.flush()
+    latest = (SopVersion.query.filter_by(article_id=art.id)
+              .order_by(SopVersion.version_no.desc()).first())
+    latest.verified_at = datetime.utcnow()
+    latest.verified_by_id = current_user.id
+    art.last_reviewed_at = latest.verified_at
     art.last_reviewed_by_id = current_user.id
     art.review_due = date.today() + timedelta(days=365)
     db.session.commit()
-    flash('SOP marqué comme vérifié — prochaine revue dans 12 mois.', 'success')
+    flash(f'SOP vérifié (version v{latest.version_no}) — prochaine revue dans '
+          '12 mois.', 'success')
     return redirect(url_for('help.article', slug=art.slug))
 
 
@@ -1037,7 +1052,11 @@ def _get_version(art_id, version_no, brand):
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
-    _require_edit(art.department)
+    # Contributors of the department, the department owner, and admins.
+    if not (user_can_edit(current_user, brand, art.department)
+            or user_owns_department(current_user,
+                                    _get_department(art.department, brand))):
+        abort(403)
     ver = SopVersion.query.filter_by(article_id=art.id,
                                      version_no=version_no).first()
     if not ver:
@@ -1047,20 +1066,21 @@ def _get_version(art_id, version_no, brand):
 
 @help_bp.route('/<int:art_id>/version/<int:version_no>')
 @login_required
-@editor_required
 def version_view(art_id, version_no):
     art, ver = _get_version(art_id, version_no, _brand())
     is_latest = ver.version_no == _current_version_no(art)
     return render_template('help/version_view.html', art=art, ver=ver,
                            is_latest=is_latest,
+                           can_restore=user_can_edit(current_user, _brand(),
+                                                     art.department),
                            dept=_get_department(art.department))
 
 
 @help_bp.route('/<int:art_id>/version/<int:version_no>/restore', methods=['POST'])
 @login_required
-@editor_required
 def version_restore(art_id, version_no):
     art, ver = _get_version(art_id, version_no, _brand())
+    _require_edit(art.department)  # restoring rewrites content: editors only
     if ver.version_no == _current_version_no(art):
         flash('Cette version est déjà la version actuelle.', 'info')
         return redirect(url_for('help.article', slug=art.slug) + '#versions')
@@ -1101,7 +1121,6 @@ def _diff_segments(old_text, new_text, context=20):
 
 @help_bp.route('/<int:art_id>/version/<int:version_no>/diff')
 @login_required
-@editor_required
 def version_diff(art_id, version_no):
     brand = _brand()
     art, ver = _get_version(art_id, version_no, brand)

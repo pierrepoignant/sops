@@ -152,7 +152,7 @@
         {% endif %}
     </div>
 
-    {% if can_edit %}
+    {% if can_edit or can_verify %}
     <div class="review-banner {% if art.review_overdue %}overdue{% endif %}">
         <i class="fas fa-clipboard-check"></i>
         {% if art.last_reviewed_at %}
@@ -164,9 +164,13 @@
         <span>Prochaine revue : <strong>{{ art.review_due.strftime('%d/%m/%Y') }}</strong>{% if art.review_overdue %} <span class="text-danger fw-bold">— en retard</span>{% endif %}.</span>
         {% endif %}
         {% if art.owner %}<span>Responsable : {{ art.owner.display_name }}.</span>{% endif %}
+        {% if can_verify %}
         <form method="post" action="{{ url_for('help.mark_reviewed', art_id=art.id) }}" class="ms-auto">
             <button class="btn btn-sm btn-outline-success"><i class="fas fa-check"></i> Marquer comme vérifié</button>
         </form>
+        {% else %}
+        <span class="ms-auto text-muted" style="font-size:12px;">Vérification réservée au responsable du département.</span>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -182,7 +186,7 @@
                 {% if art.attachments %}<span class="badge rounded-pill">{{ art.attachments | length }}</span>{% endif %}
             </button>
         </li>
-        {% if can_edit %}
+        {% if can_edit or can_verify %}
         <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-versions" type="button" role="tab">
                 <i class="fas fa-history"></i> Versions
@@ -305,7 +309,7 @@
             </div>
         </div>
 
-        {% if can_edit %}
+        {% if can_edit or can_verify %}
         <div class="tab-pane fade" id="tab-versions" role="tabpanel">
             <div class="sop-panel mt-3">
                 {% if versions %}
@@ -321,12 +325,18 @@
                     </thead>
                     <tbody>
                         {% for v in versions %}
-                        <tr>
+                        <tr {% if v.verified_at %}class="table-success"{% endif %}>
                             <td><strong>v{{ v.version_no }}</strong></td>
                             <td>{{ v.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
                             <td>{{ v.edited_by.display_name if v.edited_by else '—' }}</td>
                             <td>{{ v.title }}
-                                {% if loop.first %}<span class="badge text-bg-success">actuelle</span>{% endif %}
+                                {% if loop.first %}<span class="badge text-bg-primary">actuelle</span>{% endif %}
+                                {% if v.verified_at %}
+                                <span class="badge text-bg-success" title="Version vérifiée">
+                                    <i class="fas fa-check-circle"></i>
+                                    vérifiée le {{ v.verified_at.strftime('%d/%m/%Y') }}{% if v.verified_by %} par {{ v.verified_by.display_name }}{% endif %}
+                                </span>
+                                {% endif %}
                             </td>
                             <td class="text-end">
                                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_view', art_id=art.id, version_no=v.version_no) }}">
@@ -337,7 +347,7 @@
                                     <i class="fas fa-exchange-alt"></i> Différences
                                 </a>
                                 {% endif %}
-                                {% if not loop.first %}
+                                {% if not loop.first and can_edit %}
                                 <form method="post" action="{{ url_for('help.version_restore', art_id=art.id, version_no=v.version_no) }}" class="d-inline"
                                       onsubmit="return confirm('Restaurer la version v{{ v.version_no }} ? La version actuelle reste dans l\'historique.');">
                                     <button class="btn btn-sm btn-outline-warning" title="Restaurer"><i class="fas fa-undo"></i></button>

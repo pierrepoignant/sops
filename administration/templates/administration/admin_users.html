@@ -4,6 +4,13 @@
 {% block page_title %}Utilisateurs{% endblock %}
 
 {% block page_buttons %}
+<form method="post" action="{{ url_for('administration.sync_cadence') }}" class="d-inline"
+      onsubmit="const b = this.querySelector('button'); b.disabled = true; b.innerHTML = 'Synchronisation…';">
+    <button type="submit" class="btn btn-sm btn-outline-secondary"
+            title="Importe les employés actifs de Cadence — équipe Boutiques → département Boutiques, Opérations → Opérations">
+        <i class="fas fa-sync-alt"></i> Synchroniser depuis Cadence
+    </button>
+</form>
 <button type="button" class="btn btn-sm btn-brand" onclick="openCreateUserModal()">
     <i class="fas fa-user-plus"></i> Ajouter un utilisateur
 </button>

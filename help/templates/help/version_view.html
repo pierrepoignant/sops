@@ -24,6 +24,10 @@
             Version <strong>v{{ ver.version_no }}</strong> du {{ ver.created_at.strftime('%d/%m/%Y à %H:%M') }}
             {% if ver.edited_by %} par {{ ver.edited_by.display_name }}{% endif %}
             — catégorie « {{ ver.category }} »
+            {% if ver.verified_at %}
+            <span class="badge text-bg-success"><i class="fas fa-check-circle"></i>
+                vérifiée le {{ ver.verified_at.strftime('%d/%m/%Y') }}{% if ver.verified_by %} par {{ ver.verified_by.display_name }}{% endif %}</span>
+            {% endif %}
         </span>
         <span class="ms-auto d-flex gap-2">
             {% if ver.version_no > 1 %}
@@ -31,7 +35,7 @@
                 <i class="fas fa-exchange-alt"></i> Différences
             </a>
             {% endif %}
-            {% if not is_latest %}
+            {% if not is_latest and can_restore %}
             <form method="post" action="{{ url_for('help.version_restore', art_id=art.id, version_no=ver.version_no) }}"
                   onsubmit="return confirm('Restaurer cette version ? La version actuelle reste dans l\'historique.');">
                 <button class="btn btn-sm btn-outline-warning"><i class="fas fa-undo"></i> Restaurer cette version</button>

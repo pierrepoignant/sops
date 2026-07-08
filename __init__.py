@@ -55,6 +55,10 @@ def _upgrade_schema():
         'users': {
             'department': 'VARCHAR(80)',
         },
+        'sop_versions': {
+            'verified_at': 'DATETIME',
+            'verified_by_id': 'INTEGER',
+        },
     }
     insp = sqla_inspect(db.engine)
     for table, columns in wanted.items():

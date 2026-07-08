@@ -51,4 +51,7 @@ ENV_VAR_KEYS = {
 
     # Anthropic Claude API — AI-generated training quizzes
     'anthropic': ['api_key'],
+
+    # Cadence (staff planning app) — employee directory sync
+    'cadence': ['api_key', 'api_url'],
 }

@@ -150,6 +150,36 @@ def admin_set_department(user_id):
     return jsonify(ok=True, department=user.department or '')
 
 
+@administration_bp.route('/users/sync-cadence', methods=['POST'])
+@login_required
+@admin_required
+def sync_cadence():
+    """Import/refresh users from the Cadence employee directory. Teams map to
+    departments (stores -> Boutiques, operations -> Opérations)."""
+    from flask import g
+    from administration import cadence_sync
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+    try:
+        stats = cadence_sync.sync_users(brand)
+    except cadence_sync.CadenceSyncError as e:
+        flash(str(e), 'danger')
+        return redirect(url_for('administration.admin_users'))
+    msg = (f"Synchronisation Cadence : {stats['created']} créé(s), "
+           f"{stats['updated']} mis à jour, {stats['unchanged']} inchangé(s)")
+    extras = []
+    if stats['no_email']:
+        extras.append(f"{stats['no_email']} sans e-mail ignorés")
+    if stats['duplicates']:
+        extras.append(f"{stats['duplicates']} doublons d'e-mail ignorés")
+    if stats['created_departments']:
+        extras.append('départements créés : '
+                      + ', '.join(stats['created_departments']))
+    if extras:
+        msg += ' (' + ' · '.join(extras) + ')'
+    flash(msg + '.', 'success')
+    return redirect(url_for('administration.admin_users'))
+
+
 @administration_bp.route('/users/<int:user_id>/delete', methods=['POST'])
 @login_required
 @admin_required
