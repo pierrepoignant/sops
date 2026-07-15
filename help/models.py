@@ -8,6 +8,18 @@ from init_db import db
 _BODY = db.Text().with_variant(MEDIUMTEXT(), 'mysql')
 
 
+# Per-department contributors: being listed grants create/edit rights on the
+# department's SOPs (one user can contribute to several departments). Replaces
+# the former global 'contributor' role + users.department allocation.
+sop_department_contributors = db.Table(
+    'sop_department_contributors',
+    db.Column('department_id', db.Integer,
+              db.ForeignKey('sop_departments.id'), primary_key=True),
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'),
+              primary_key=True),
+)
+
+
 class SopDepartment(db.Model):
     """Top level of the SOP hierarchy, per brand:
     brand -> department -> L1 category -> L2 category -> SOP.
@@ -29,6 +41,8 @@ class SopDepartment(db.Model):
     owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
     owner = db.relationship('User')
+    contributors = db.relationship('User', secondary=sop_department_contributors,
+                                   order_by='User.first_name', lazy='selectin')
 
     __table_args__ = (
         db.UniqueConstraint('brand', 'slug', name='uq_dept_brand_slug'),
@@ -211,6 +225,39 @@ class SopVersion(db.Model):
     __table_args__ = (
         db.UniqueConstraint('article_id', 'version_no', name='uq_version_art_no'),
     )
+
+
+class SopPendingChange(db.Model):
+    """A contributor's proposed change awaiting validation — only used when the
+    brand's publish mode (AppSetting sop_publish_mode) is 'moderated'. The
+    article itself is untouched ('update') or created unpublished ('create')
+    until an approver applies the change from the validation queue."""
+    __tablename__ = 'sop_pending_changes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False, default='update')  # create | update
+    title = db.Column(db.String(255), nullable=False)
+    category = db.Column(db.String(160), nullable=False, default='Général')
+    body_html = db.Column(_BODY, nullable=False, default='')
+    status = db.Column(db.String(10), nullable=False, default='pending',
+                       index=True)  # pending | approved | rejected
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                               nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    review_note = db.Column(db.String(300), nullable=True)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('pending_changes', cascade='all, delete-orphan',
+                           lazy='selectin',
+                           order_by='SopPendingChange.created_at'))
+    submitted_by = db.relationship('User', foreign_keys=[submitted_by_id])
+    reviewed_by = db.relationship('User', foreign_keys=[reviewed_by_id])
 
 
 class SopRead(db.Model):

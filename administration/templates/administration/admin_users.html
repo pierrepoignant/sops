@@ -30,7 +30,6 @@
         font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
     }
     .role-badge.admin { background: #fdecef; color: #b02a37; }
-    .role-badge.contributor { background: #fef3e2; color: #92600a; }
     .role-badge.staff { background: #e7f0fd; color: #1a56c4; }
     .dept-select { font-size: 12px; padding: 3px 22px 3px 8px; border: 1px solid #dee2e6; border-radius: 4px; background: white; max-width: 160px; }
     .status-chip {
@@ -106,7 +105,6 @@
                             <label class="form-label-sm">Rôle *</label>
                             <select name="role" class="form-select form-select-sm" required>
                                 <option value="staff" selected>Staff</option>
-                                <option value="contributor">Contributeur</option>
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
@@ -122,8 +120,10 @@
                     </div>
                     <div class="form-text" style="font-size: 11px;">
                         Staff : lit, confirme ses lectures, passe les quiz ·
-                        Contributeur : édite les SOP de son département ·
-                        Admin : tout.
+                        Admin : tout. Les droits d'édition se donnent par
+                        département (écran Départements, liste des contributeurs).
+                        Le département ci-dessus est le département d'appartenance
+                        (lecteurs attendus, quiz, notifications).
                     </div>
                     <div id="createUserError" class="alert alert-danger py-2 px-3 mt-3 mb-0" style="display:none; font-size:13px;"></div>
                 </div>
@@ -202,7 +202,6 @@ function loadUsers() {
                 ? `<span class="role-badge ${u.role}">${u.role}</span>`
                 : `<select class="role-select" onchange="setRole(${u.id}, this)">
                        <option value="staff" ${u.role==='staff'?'selected':''}>Staff</option>
-                       <option value="contributor" ${u.role==='contributor'?'selected':''}>Contributeur</option>
                        <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
                    </select>`;
             const deptControl = `<select class="dept-select" onchange="setDepartment(${u.id}, this)">

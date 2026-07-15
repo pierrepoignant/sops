@@ -16,7 +16,7 @@ from help import help_bp
 from help.models import (HelpArticle, HelpCategory, SopDepartment,
                          SopAttachment, SopDeptAttachment, SopVersion, SopRead,
                          SopArticleView, SopSearchLog, SopQuiz,
-                         SopQuizQuestion, SopQuizAttempt)
+                         SopQuizQuestion, SopQuizAttempt, SopPendingChange)
 from help.html_clean import clean_article_html
 from help.search import search as run_search, html_to_text
 from media import storage
@@ -32,21 +32,26 @@ def admin_required(f):
 
 
 def user_can_edit(user, brand, dept_slug=None):
-    """Admins edit everything. Contributors edit the SOPs of the department
-    they are allocated to; with dept_slug=None, True if the contributor has a
-    department at all."""
+    """Admins edit everything. Other users edit the SOPs of the departments
+    whose contributors list they are on — the department owner is implicitly
+    a contributor. With dept_slug=None, True if they can edit at least one
+    department of the brand."""
     if not user or not user.is_authenticated:
         return False
     if user.is_admin:
         return True
-    if getattr(user, 'is_contributor', False) and user.department:
-        return dept_slug is None or user.department == dept_slug
-    return False
+    q = SopDepartment.query.filter(
+        SopDepartment.brand == brand,
+        db.or_(SopDepartment.owner_id == user.id,
+               SopDepartment.contributors.any(id=user.id)))
+    if dept_slug:
+        q = q.filter(SopDepartment.slug == dept_slug)
+    return db.session.query(q.exists()).scalar()
 
 
 def editor_required(f):
-    """Admin, or a contributor with a department. Department-specific checks
-    happen inside the route via _require_edit."""
+    """Admin, or a contributor/owner of at least one department. Department-
+    specific checks happen inside the route via _require_edit."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not user_can_edit(current_user, _brand()):
@@ -65,7 +70,9 @@ def _editable_departments(brand):
     depts = _departments(brand)
     if current_user.is_admin:
         return depts
-    return [d for d in depts if d.slug == current_user.department]
+    return [d for d in depts
+            if d.owner_id == current_user.id
+            or any(u.id == current_user.id for u in d.contributors)]
 
 
 def user_owns_department(user, dept):
@@ -454,7 +461,187 @@ def mark_reviewed(art_id):
     db.session.commit()
     flash(f'SOP vérifié (version v{latest.version_no}) — prochaine revue dans '
           '12 mois.', 'success')
+    nxt = request.form.get('next') or ''
+    if nxt.startswith('/') and not nxt.startswith('//'):
+        return redirect(nxt)
     return redirect(url_for('help.article', slug=art.slug))
+
+
+# --- Change & validation queues ---
+
+def _verifiable_departments(brand):
+    """Departments whose SOP changes the current user may validate."""
+    return [d for d in _departments(brand)
+            if user_can_verify(current_user, d, brand)]
+
+
+@help_bp.route('/queue')
+@login_required
+def queue():
+    """File de validation + historique des modifications. Approvers see what
+    awaits them (pending moderated changes, unverified latest versions);
+    contributors follow the status of their own changes."""
+    brand = _brand()
+    editable = _editable_departments(brand)
+    verifiable = _verifiable_departments(brand)
+    if not (editable or verifiable):
+        abort(403)
+    visible = {d.slug for d in editable} | {d.slug for d in verifiable}
+    verifiable_slugs = {d.slug for d in verifiable}
+
+    pending = (SopPendingChange.query.join(HelpArticle)
+               .filter(HelpArticle.brand == brand,
+                       HelpArticle.department.in_(visible),
+                       SopPendingChange.status == 'pending')
+               .order_by(SopPendingChange.created_at.asc()).all())
+
+    # 'Publish now, verify after' flow: articles whose latest version awaits
+    # its verification stamp.
+    unverified = []
+    for art in (HelpArticle.query
+                .filter(HelpArticle.brand == brand,
+                        HelpArticle.department.in_(visible)).all()):
+        last = (SopVersion.query.filter_by(article_id=art.id)
+                .order_by(SopVersion.version_no.desc()).first())
+        if last and not last.verified_at:
+            unverified.append((art, last))
+    unverified.sort(key=lambda p: p[1].created_at or datetime.min, reverse=True)
+
+    history = (SopVersion.query.join(HelpArticle)
+               .filter(HelpArticle.brand == brand,
+                       HelpArticle.department.in_(visible))
+               .order_by(SopVersion.created_at.desc()).limit(50).all())
+    reviewed = (SopPendingChange.query.join(HelpArticle)
+                .filter(HelpArticle.brand == brand,
+                        HelpArticle.department.in_(visible),
+                        SopPendingChange.status != 'pending')
+                .order_by(SopPendingChange.reviewed_at.desc()).limit(20).all())
+    return render_template('help/queue.html', pending=pending,
+                           unverified=unverified, history=history,
+                           reviewed=reviewed,
+                           dept_names={d.slug: d.name for d in _departments(brand)},
+                           verifiable_slugs=verifiable_slugs,
+                           publish_mode=_publish_mode(brand))
+
+
+def _notify_submitter(ch, approved):
+    """Tell the author of a pending change how it was reviewed."""
+    from auth.email_sender import send_email
+    if not (ch.submitted_by and ch.submitted_by.email
+            and ch.submitted_by_id != current_user.id):
+        return
+    link = (request.url_root.rstrip('/')
+            + url_for('help.article', slug=ch.article.slug))
+    if approved:
+        subject = f'SOP publié : {ch.title}'
+        body = (f"Bonjour,\n\nVotre modification de « {ch.title} » a été "
+                f"approuvée et publiée par {current_user.display_name}.\n"
+                f"{link}\n\n— Espace SOP")
+    else:
+        note = f"\nMotif : {ch.review_note}" if ch.review_note else ''
+        subject = f'SOP refusé : {ch.title}'
+        body = (f"Bonjour,\n\nVotre modification de « {ch.title} » a été "
+                f"refusée par {current_user.display_name}.{note}\n"
+                f"{link}\n\n— Espace SOP")
+    try:
+        send_email([ch.submitted_by.email], subject, body, brand_id=_brand())
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('SOP review notification failed')
+
+
+def _get_pending_change(change_id, brand):
+    ch = db.session.get(SopPendingChange, change_id)
+    if not ch or ch.article.brand != brand:
+        abort(404)
+    return ch
+
+
+@help_bp.route('/queue/change/<int:change_id>')
+@login_required
+def queue_change(change_id):
+    """Diff of a proposed change (current article vs proposal), with the
+    approve/reject actions for approvers."""
+    brand = _brand()
+    ch = _get_pending_change(change_id, brand)
+    dept = _get_department(ch.article.department, brand)
+    if not (user_can_edit(current_user, brand, ch.article.department)
+            or user_can_verify(current_user, dept, brand)):
+        abort(403)
+    old_text = html_to_text(ch.article.body_html) if ch.kind == 'update' else ''
+    new_text = html_to_text(ch.body_html)
+    segments = _diff_segments(re.sub(r'\s+', ' ', old_text).strip(),
+                              re.sub(r'\s+', ' ', new_text).strip())
+    changed = any(op in ('del', 'ins') for op, _ in segments)
+    return render_template('help/queue_change.html', ch=ch, dept=dept,
+                           segments=segments, changed=changed,
+                           can_review=user_can_verify(current_user, dept, brand))
+
+
+@help_bp.route('/queue/change/<int:change_id>/approve', methods=['POST'])
+@login_required
+def queue_change_approve(change_id):
+    brand = _brand()
+    ch = _get_pending_change(change_id, brand)
+    art = ch.article
+    if not user_can_verify(current_user,
+                           _get_department(art.department, brand), brand):
+        abort(403)
+    if ch.status != 'pending':
+        flash('Cette modification a déjà été traitée.', 'info')
+        return redirect(url_for('help.queue'))
+    # Apply the proposal, version it as the submitter's edit, publish, and
+    # stamp the new version verified by the approver.
+    has_versions = SopVersion.query.filter_by(article_id=art.id).count() > 0
+    pre_edit = {'title': art.title, 'category': art.category,
+                'body_html': art.body_html}
+    art.title = ch.title
+    art.category = ch.category
+    art.body_html = ch.body_html
+    art.search_text = re.sub(
+        r'\s+', ' ', f'{ch.title} {html_to_text(ch.body_html)}').strip()[:60000]
+    art.is_published = True
+    if not has_versions and ch.kind == 'update':
+        _snapshot(art, None, baseline=pre_edit)
+        db.session.flush()
+    _snapshot(art, ch.submitted_by_id)
+    db.session.flush()
+    latest = (SopVersion.query.filter_by(article_id=art.id)
+              .order_by(SopVersion.version_no.desc()).first())
+    latest.verified_at = datetime.utcnow()
+    latest.verified_by_id = current_user.id
+    art.last_reviewed_at = latest.verified_at
+    art.last_reviewed_by_id = current_user.id
+    art.review_due = date.today() + timedelta(days=365)
+    ch.status = 'approved'
+    ch.reviewed_by_id = current_user.id
+    ch.reviewed_at = datetime.utcnow()
+    db.session.commit()
+    _notify_submitter(ch, approved=True)
+    flash(f'Modification approuvée et publiée (v{latest.version_no}).',
+          'success')
+    return redirect(url_for('help.queue'))
+
+
+@help_bp.route('/queue/change/<int:change_id>/reject', methods=['POST'])
+@login_required
+def queue_change_reject(change_id):
+    brand = _brand()
+    ch = _get_pending_change(change_id, brand)
+    if not user_can_verify(current_user,
+                           _get_department(ch.article.department, brand), brand):
+        abort(403)
+    if ch.status != 'pending':
+        flash('Cette modification a déjà été traitée.', 'info')
+        return redirect(url_for('help.queue'))
+    ch.status = 'rejected'
+    ch.reviewed_by_id = current_user.id
+    ch.reviewed_at = datetime.utcnow()
+    ch.review_note = (request.form.get('note') or '').strip()[:300] or None
+    db.session.commit()
+    _notify_submitter(ch, approved=False)
+    flash('Modification refusée.', 'info')
+    return redirect(url_for('help.queue'))
 
 
 # --- Management (admin only) ---
@@ -525,11 +712,15 @@ def edit(art_id):
 
 
 def _owner_options(brand, dept_slug):
-    """Candidate SOP owners: admins + contributors allocated to the department."""
+    """Candidate SOP owners: admins + the department's contributors and owner."""
     from auth.models import User
     out = {u.id: u for u in User.query.filter_by(role='admin').all()}
-    for u in User.query.filter_by(role='contributor', department=dept_slug).all():
-        out[u.id] = u
+    dept = _get_department(dept_slug, brand)
+    if dept:
+        for u in dept.contributors:
+            out[u.id] = u
+        if dept.owner:
+            out[dept.owner.id] = dept.owner
     return sorted(out.values(), key=lambda u: u.display_name.lower())
 
 
@@ -543,10 +734,9 @@ def departments_manage():
     depts = _departments(brand)
     counts = dict(db.session.query(HelpArticle.department, db.func.count(HelpArticle.id))
                   .filter_by(brand=brand).group_by(HelpArticle.department).all())
-    owner_candidates = sorted(_brand_users(brand),
-                              key=lambda u: u.display_name.lower())
+    brand_users = sorted(_brand_users(brand), key=lambda u: u.display_name.lower())
     return render_template('help/departments.html', departments=depts,
-                           counts=counts, owner_candidates=owner_candidates)
+                           counts=counts, brand_users=brand_users)
 
 
 @help_bp.route('/departments/new', methods=['POST'])
@@ -565,8 +755,17 @@ def department_create():
         return redirect(url_for('help.departments_manage'))
     nxt = (db.session.query(db.func.coalesce(db.func.max(SopDepartment.sort_order), -1))
            .filter_by(brand=brand).scalar() or -1) + 1
-    db.session.add(SopDepartment(brand=brand, slug=slug, name=name, icon=icon,
-                                 sort_order=nxt))
+    dept = SopDepartment(brand=brand, slug=slug, name=name, icon=icon,
+                         sort_order=nxt)
+    raw_owner = (request.form.get('owner_id') or '').strip()
+    if raw_owner.isdigit():
+        dept.owner_id = int(raw_owner)
+    ids = {int(x) for x in request.form.getlist('contributor_ids')
+           if str(x).isdigit()}
+    if ids:
+        from auth.models import User
+        dept.contributors = User.query.filter(User.id.in_(ids)).all()
+    db.session.add(dept)
     db.session.commit()
     flash('Département ajouté.', 'success')
     return redirect(url_for('help.departments_manage'))
@@ -586,20 +785,40 @@ def department_update(dept_id):
         dept.name = name
     if icon:
         dept.icon = icon
-    try:
-        if request.form.get('sort_order') is not None:
-            dept.sort_order = int(request.form.get('sort_order') or dept.sort_order)
-    except (ValueError, TypeError):
-        pass
     if 'owner_id' in request.form:
         raw = request.form.get('owner_id')
         try:
             dept.owner_id = int(raw) if raw else None
         except (ValueError, TypeError):
             pass
+    if 'contributors_present' in request.form:
+        from auth.models import User
+        ids = {int(x) for x in request.form.getlist('contributor_ids')
+               if str(x).isdigit()}
+        dept.contributors = (User.query.filter(User.id.in_(ids)).all()
+                             if ids else [])
     db.session.commit()
     flash('Département mis à jour.', 'success')
     return redirect(url_for('help.departments_manage'))
+
+
+@help_bp.route('/departments/reorder', methods=['POST'])
+@login_required
+@admin_required
+def departments_reorder():
+    """Persist the drag-and-drop order of the departments list. Body:
+    {"ids": [dept_id, ...]} in display order."""
+    brand = _brand()
+    ids = (request.get_json(silent=True) or {}).get('ids') or []
+    depts = {d.id: d for d in SopDepartment.query.filter_by(brand=brand).all()}
+    pos = 0
+    for raw in ids:
+        d = depts.get(int(raw)) if str(raw).isdigit() else None
+        if d:
+            d.sort_order = pos
+            pos += 1
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @help_bp.route('/departments/<int:dept_id>/delete', methods=['POST'])
@@ -874,6 +1093,88 @@ def _notify_team(art, editor, is_new):
         return 0
 
 
+def _publish_mode(brand):
+    """'immediate' (publish now, verify after — default) or 'moderated'
+    (contributor edits wait in the validation queue). Admin Configuration."""
+    from administration.models import AppSetting
+    return AppSetting.get(brand, 'sop_publish_mode', 'immediate')
+
+
+def _must_moderate(dept_slug, brand):
+    """True when the current user's edits go through the validation queue:
+    moderated publish mode and the user is not an approver (admins and the
+    department's approver always publish directly)."""
+    if _publish_mode(brand) != 'moderated':
+        return False
+    return not user_can_verify(current_user, _get_department(dept_slug, brand),
+                               brand)
+
+
+def _change_watchers(dept_slug, brand, exclude_id=None):
+    """The department's validation chain, notified of SOP changes: the brand's
+    designated approver (when Configuration names one), the department owner,
+    and the department's contributors."""
+    from administration.models import AppSetting
+    from auth.models import User
+    watchers = {}
+    if AppSetting.get(brand, 'sop_approver_mode', 'owner') == 'user':
+        uid = AppSetting.get(brand, 'sop_approver_user_id') or ''
+        if str(uid).isdigit():
+            u = db.session.get(User, int(uid))
+            if u:
+                watchers[u.id] = u
+    dept = _get_department(dept_slug, brand)
+    if dept:
+        if dept.owner:
+            watchers[dept.owner.id] = dept.owner
+        for u in dept.contributors:
+            watchers[u.id] = u
+    watchers.pop(exclude_id, None)
+    return [u.email for u in watchers.values() if u.email]
+
+
+def _notify_change_watchers(art, editor, *, pending_change=None):
+    """Email the validation chain that a SOP changed — or, with
+    ``pending_change``, that a proposal awaits validation in the queue."""
+    from auth.email_sender import send_email
+    brand = _brand()
+    recipients = _change_watchers(art.department, brand, exclude_id=editor.id)
+    if not recipients:
+        return 0
+    if pending_change is not None:
+        link = (request.url_root.rstrip('/')
+                + url_for('help.queue_change', change_id=pending_change.id))
+        subject = f'SOP à valider : {pending_change.title}'
+        body = (f"Bonjour,\n\n"
+                f"Une modification de « {pending_change.title} » proposée par "
+                f"{editor.display_name} attend votre validation :\n{link}\n\n"
+                f"— Espace SOP")
+    else:
+        link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
+        subject = f'SOP modifié : {art.title}'
+        body = (f"Bonjour,\n\n"
+                f"La procédure « {art.title} » ({art.category}) a été modifiée "
+                f"par {editor.display_name}.\n{link}\n\n"
+                f"— Espace SOP")
+    try:
+        return send_email(recipients, subject, body, brand_id=brand)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('SOP watcher notification failed')
+        return 0
+
+
+def _submit_pending(art, *, kind, title, category, body_html):
+    """Queue a proposed change for validation instead of applying it, and
+    alert the department's validation chain."""
+    change = SopPendingChange(
+        article_id=art.id, kind=kind, title=title, category=category,
+        body_html=body_html, submitted_by_id=current_user.id)
+    db.session.add(change)
+    db.session.commit()
+    _notify_change_watchers(art, current_user, pending_change=change)
+
+
 def _snapshot(art, editor_id, baseline=None):
     """Append a SopVersion capturing the article's current state, unless it is
     identical to the latest one. ``baseline`` snapshots a pre-edit state (used
@@ -902,11 +1203,22 @@ def create():
         flash(err, 'warning')
         return redirect(url_for('help.new'))
     _require_edit(art.department)
+    moderated = _must_moderate(art.department, brand)
+    if moderated:
+        # Created unpublished; the validation queue publishes it on approval.
+        art.is_published = False
     art.slug = _unique_slug(art.title)
     db.session.add(art)
     db.session.flush()
     _snapshot(art, current_user.id)
+    if moderated:
+        _submit_pending(art, kind='create', title=art.title,
+                        category=art.category, body_html=art.body_html)
+        flash('SOP soumis pour validation — il sera publié après approbation.',
+              'info')
+        return redirect(url_for('help.article', slug=art.slug))
     db.session.commit()
+    _notify_change_watchers(art, current_user)
     if request.form.get('notify_team') == 'on' and art.is_published:
         n = _notify_team(art, current_user, is_new=True)
         if n:
@@ -924,6 +1236,18 @@ def update(art_id):
     if not art:
         abort(404)
     _require_edit(art.department)
+    if _must_moderate(art.department, brand):
+        # The article is untouched; the proposal waits in the validation queue.
+        title = (request.form.get('title') or '').strip()
+        category = (request.form.get('category') or 'Général').strip() or 'Général'
+        if not title:
+            flash('Le titre est requis.', 'warning')
+            return redirect(url_for('help.edit', art_id=art_id))
+        _submit_pending(art, kind='update', title=title, category=category,
+                        body_html=request.form.get('body_html') or '')
+        flash('Modification soumise pour validation — elle sera publiée après '
+              'approbation.', 'info')
+        return redirect(url_for('help.article', slug=art.slug))
     # Articles older than versioning have no v1: snapshot their pre-edit state
     # first so the diff of this edit has something to compare against.
     pre_edit = {'title': art.title, 'category': art.category,
@@ -939,6 +1263,7 @@ def update(art_id):
         db.session.flush()
     _snapshot(art, current_user.id)
     db.session.commit()
+    _notify_change_watchers(art, current_user)
     if request.form.get('notify_team') == 'on' and art.is_published:
         n = _notify_team(art, current_user, is_new=False)
         if n:
@@ -961,6 +1286,11 @@ def clean_html(art_id):
     cleaned = clean_article_html(art.body_html)
     if cleaned == (art.body_html or '').strip():
         flash('Le HTML de ce SOP est déjà propre.', 'info')
+        return redirect(url_for('help.edit', art_id=art.id))
+    if _must_moderate(art.department, brand):
+        _submit_pending(art, kind='update', title=art.title,
+                        category=art.category, body_html=cleaned)
+        flash('Nettoyage soumis pour validation.', 'info')
         return redirect(url_for('help.edit', art_id=art.id))
     pre_edit = {'title': art.title, 'category': art.category,
                 'body_html': art.body_html}
@@ -1211,6 +1541,12 @@ def version_restore(art_id, version_no):
     _require_edit(art.department)  # restoring rewrites content: editors only
     if ver.version_no == _current_version_no(art):
         flash('Cette version est déjà la version actuelle.', 'info')
+        return redirect(url_for('help.article', slug=art.slug) + '#versions')
+    if _must_moderate(art.department, _brand()):
+        _submit_pending(art, kind='update', title=ver.title,
+                        category=ver.category, body_html=ver.body_html)
+        flash(f'Restauration de la v{ver.version_no} soumise pour validation.',
+              'info')
         return redirect(url_for('help.article', slug=art.slug) + '#versions')
     art.title = ver.title
     art.category = ver.category

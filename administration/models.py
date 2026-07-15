@@ -28,6 +28,9 @@ class AppSetting(db.Model):
 
         sop_approver_mode     'owner' (department owner, default) | 'user'
         sop_approver_user_id  users.id as a string, when mode is 'user'
+        sop_publish_mode      'immediate' (publish now, verify after, default)
+                              | 'moderated' (contributor edits wait in the
+                              validation queue as SopPendingChange rows)
     """
     __tablename__ = 'app_settings'
 

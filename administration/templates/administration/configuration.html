@@ -48,7 +48,29 @@
                 {% endfor %}
             </select>
         </div>
-        <button type="submit" class="btn btn-sm btn-brand">
+        <hr class="my-3">
+        <h6><i class="fas fa-paper-plane me-1"></i> Publication des modifications</h6>
+        <p class="config-help">Que se passe-t-il quand un contributeur enregistre une SOP ?
+            Les approbateurs (et administrateurs) publient toujours directement.</p>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="publish_mode" id="pub-immediate"
+                   value="immediate" {% if publish_mode != 'moderated' %}checked{% endif %}>
+            <label class="form-check-label" for="pub-immediate">
+                Publier immédiatement, valider ensuite
+                <span class="config-help d-block mb-0">La modification est visible tout de suite ;
+                    elle apparaît dans la file de validation jusqu'à sa vérification.</span>
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="publish_mode" id="pub-moderated"
+                   value="moderated" {% if publish_mode == 'moderated' %}checked{% endif %}>
+            <label class="form-check-label" for="pub-moderated">
+                Valider avant publication
+                <span class="config-help d-block mb-0">La modification est mise en attente ;
+                    elle n'est visible qu'après approbation dans la file de validation.</span>
+            </label>
+        </div>
+        <button type="submit" class="btn btn-sm btn-brand mt-2">
             <i class="fas fa-save me-1"></i> Enregistrer
         </button>
     </form>

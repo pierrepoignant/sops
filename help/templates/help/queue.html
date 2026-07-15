@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Validation · SOP{% endblock %}
+{% block page_title %}Validation{% endblock %}
+{% block page_subtitle %}Modifications en attente et historique des changements
+    {% if publish_mode == 'moderated' %} · mode : valider avant publication{% else %} · mode : publier puis valider{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+    .q-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px; }
+    .q-card h6 { padding: 12px 16px; margin: 0; border-bottom: 1px solid var(--pim-border-light); font-weight: 700; }
+    .q-row { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+             border-bottom: 1px solid var(--pim-border-light); font-size: 13.5px; flex-wrap: wrap; }
+    .q-row:last-child { border-bottom: none; }
+    .q-title { font-weight: 600; color: #43321f; text-decoration: none; }
+    .q-title:hover { color: var(--pim-primary); }
+    .q-meta { color: var(--pim-text-muted); font-size: 12.5px; }
+    .badge-dept { background: #f4efe7; color: #6b5b43; border-radius: 20px; padding: 2px 9px; font-size: 12px; }
+    .badge-status { border-radius: 20px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
+    .badge-status.pending { background: #fef3e2; color: #92600a; }
+    .badge-status.approved, .badge-status.verified { background: #def7e4; color: #14683a; }
+    .badge-status.rejected { background: #fde8e8; color: #9b1c1c; }
+    .badge-status.unverified { background: #eef2f7; color: #4a5b70; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column gap-3" style="max-width: 960px;">
+
+    <div class="q-card">
+        <h6><i class="fas fa-clipboard-check me-1"></i> À valider
+            <span class="q-meta">({{ pending|length + unverified|length }})</span></h6>
+        {% for ch in pending %}
+        <div class="q-row">
+            <span class="badge-dept">{{ dept_names.get(ch.article.department, ch.article.department) }}</span>
+            <a class="q-title" href="{{ url_for('help.queue_change', change_id=ch.id) }}">{{ ch.title }}</a>
+            <span class="badge-status pending">{{ 'nouvelle SOP' if ch.kind == 'create' else 'modification' }} en attente</span>
+            <span class="q-meta">par {{ ch.submitted_by.display_name if ch.submitted_by else '?' }}
+                le {{ ch.created_at.strftime('%d/%m/%Y à %H:%M') }}</span>
+            <span class="ms-auto">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.queue_change', change_id=ch.id) }}">
+                    <i class="fas fa-exchange-alt"></i> Voir les différences
+                </a>
+            </span>
+        </div>
+        {% endfor %}
+        {% for art, ver in unverified %}
+        <div class="q-row">
+            <span class="badge-dept">{{ dept_names.get(art.department, art.department) }}</span>
+            <a class="q-title" href="{{ url_for('help.article', slug=art.slug) }}">{{ art.title }}</a>
+            <span class="badge-status unverified">v{{ ver.version_no }} non vérifiée</span>
+            <span class="q-meta">{% if ver.edited_by %}par {{ ver.edited_by.display_name }}{% endif %}
+                le {{ ver.created_at.strftime('%d/%m/%Y à %H:%M') }}</span>
+            <span class="ms-auto d-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_diff', art_id=art.id, version_no=ver.version_no) }}">
+                    <i class="fas fa-exchange-alt"></i> Différences
+                </a>
+                {% if art.department in verifiable_slugs %}
+                <form method="POST" action="{{ url_for('help.mark_reviewed', art_id=art.id) }}">
+                    <input type="hidden" name="next" value="{{ url_for('help.queue') }}">
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-check"></i> Valider</button>
+                </form>
+                {% endif %}
+            </span>
+        </div>
+        {% endfor %}
+        {% if not pending and not unverified %}
+        <div class="q-row q-meta">Rien à valider. 🎉</div>
+        {% endif %}
+    </div>
+
+    <div class="q-card">
+        <h6><i class="fas fa-history me-1"></i> Modifications récentes</h6>
+        {% for ch in reviewed %}
+        <div class="q-row">
+            <span class="badge-dept">{{ dept_names.get(ch.article.department, ch.article.department) }}</span>
+            <a class="q-title" href="{{ url_for('help.article', slug=ch.article.slug) }}">{{ ch.title }}</a>
+            <span class="badge-status {{ ch.status }}">{{ 'approuvée' if ch.status == 'approved' else 'refusée' }}</span>
+            <span class="q-meta">proposée par {{ ch.submitted_by.display_name if ch.submitted_by else '?' }} ·
+                {{ 'traitée' }} par {{ ch.reviewed_by.display_name if ch.reviewed_by else '?' }}
+                le {{ ch.reviewed_at.strftime('%d/%m/%Y') if ch.reviewed_at }}
+                {%- if ch.review_note %} · « {{ ch.review_note }} »{% endif %}</span>
+        </div>
+        {% endfor %}
+        {% for ver in history %}
+        <div class="q-row">
+            <span class="badge-dept">{{ dept_names.get(ver.article.department, ver.article.department) }}</span>
+            <a class="q-title" href="{{ url_for('help.article', slug=ver.article.slug) }}">{{ ver.title }}</a>
+            <span class="q-meta">v{{ ver.version_no }}
+                {%- if ver.edited_by %} par {{ ver.edited_by.display_name }}{% endif %}
+                le {{ ver.created_at.strftime('%d/%m/%Y à %H:%M') }}</span>
+            {% if ver.verified_at %}
+            <span class="badge-status verified"><i class="fas fa-check-double"></i>
+                vérifiée le {{ ver.verified_at.strftime('%d/%m/%Y') }}</span>
+            {% else %}
+            <span class="badge-status unverified">non vérifiée</span>
+            {% endif %}
+            <span class="ms-auto">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.version_diff', art_id=ver.article_id, version_no=ver.version_no) }}">
+                    <i class="fas fa-exchange-alt"></i>
+                </a>
+            </span>
+        </div>
+        {% else %}
+        {% if not reviewed %}<div class="q-row q-meta">Aucune modification enregistrée.</div>{% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

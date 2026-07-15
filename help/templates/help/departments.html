@@ -2,76 +2,178 @@
 
 {% block title %}Départements · SOP{% endblock %}
 {% block page_title %}Départements{% endblock %}
-{% block page_subtitle %}Organisation de premier niveau des SOP {{ brand_name }}{% endblock %}
+{% block page_subtitle %}Organisation de premier niveau des SOP {{ brand_name }} · glissez-déposez pour réorganiser{% endblock %}
 
 {% block page_buttons %}
 <a href="{{ url_for('help.index') }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-book-open"></i> Voir les SOP</a>
+<button type="button" class="btn btn-sm btn-brand" onclick="openDeptModal(null)"><i class="fas fa-plus"></i> Nouveau département</button>
 {% endblock %}
 
 {% block head %}
+<link href="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.css" rel="stylesheet" onerror="this.remove()">
 <style>
-    .add-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px; padding: 16px 18px; }
-    .dept-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pim-border-light); }
-    .dept-ico-sm { width: 38px; height: 38px; border-radius: 9px; display:inline-flex; align-items:center; justify-content:center;
+    .dept-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+                border-bottom: 1px solid var(--pim-border-light); background: white; }
+    .dept-row:last-child { border-bottom: none; }
+    .dept-handle { color: #c3b6a4; cursor: grab; padding: 4px 2px; }
+    .dept-handle:active { cursor: grabbing; }
+    .dept-ico-sm { width: 38px; height: 38px; border-radius: 9px; flex: none;
+                   display: inline-flex; align-items: center; justify-content: center;
                    background: rgba(var(--pim-primary-rgb), 0.12); color: var(--pim-primary); }
+    .dept-name { font-weight: 600; color: #43321f; }
+    .dept-meta { font-size: 12.5px; color: var(--pim-text-muted); }
+    .dept-meta .badge-soft { background: #f4efe7; color: #6b5b43; border-radius: 20px;
+                             padding: 2px 9px; font-weight: 500; }
+    .sortable-ghost { opacity: .45; }
+    .sortable-drag { opacity: .95; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="add-card mb-3" style="max-width:720px;">
-    <form method="POST" action="{{ url_for('help.department_create') }}" class="row g-2 align-items-end">
-        <div class="col-md-7">
-            <label class="form-label small text-muted mb-1">Nouveau département</label>
-            <input type="text" name="name" class="form-control form-control-sm" required placeholder="ex : Production, Logistique…">
-        </div>
-        <div class="col-md-3">
-            <label class="form-label small text-muted mb-1">Icône (Font Awesome)</label>
-            <input type="text" name="icon" class="form-control form-control-sm" placeholder="fa-store" value="fa-folder-open">
-        </div>
-        <div class="col-md-2 text-end">
-            <button type="submit" class="btn btn-sm btn-brand w-100"><i class="fas fa-plus"></i> Ajouter</button>
-        </div>
-    </form>
-    <div class="form-text mt-2">Icônes : voir <a href="https://fontawesome.com/v5/search?o=r&m=free" target="_blank" rel="noopener">fontawesome.com</a> (ex : fa-store, fa-industry, fa-truck, fa-utensils).</div>
-</div>
-
-<div class="card border-0 shadow-sm" style="max-width:720px;">
-    <div class="card-body">
+<div class="card border-0 shadow-sm" style="max-width:860px;">
+    <div id="dept-list" class="card-body p-0">
         {% for d in departments %}
-        <div class="dept-row" style="flex-wrap: wrap;">
+        <div class="dept-row" data-id="{{ d.id }}">
+            <span class="dept-handle" title="Déplacer"><i class="fas fa-grip-vertical"></i></span>
             <span class="dept-ico-sm"><i class="fas {{ d.icon }}"></i></span>
-            <form method="POST" action="{{ url_for('help.department_update', dept_id=d.id) }}"
-                  class="d-flex align-items-center gap-2 flex-grow-1 flex-wrap">
-                <input type="number" name="sort_order" value="{{ d.sort_order }}" class="form-control form-control-sm" style="width:72px;" title="Ordre">
-                <input type="text" name="name" value="{{ d.name }}" class="form-control form-control-sm" style="min-width:140px;">
-                <input type="text" name="icon" value="{{ d.icon }}" class="form-control form-control-sm" style="width:140px;" title="Icône">
-                <span class="text-muted small" style="white-space:nowrap;">{{ counts.get(d.slug, 0) }} SOP</span>
-                <a href="{{ url_for('help.manage', department=d.slug) }}" class="btn btn-sm btn-outline-secondary" title="Gérer les SOP"><i class="fas fa-list"></i></a>
-                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Enregistrer"><i class="fas fa-save"></i></button>
-            </form>
-            <form method="POST" action="{{ url_for('help.department_delete', dept_id=d.id) }}"
-                  onsubmit="return confirm('Supprimer ce département ? (uniquement s\'il est vide)');">
-                <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
-            </form>
-            <div class="w-100 d-flex align-items-center gap-2 flex-wrap" style="padding-left: 48px; font-size: 13px;">
-                <span class="text-muted" title="Gère le quiz du département et voit ses statistiques">
-                    <i class="fas fa-user-tie"></i> Responsable :</span>
-                <form method="POST" action="{{ url_for('help.department_update', dept_id=d.id) }}"
-                      class="d-flex gap-1 align-items-center">
-                    <select name="owner_id" class="form-select form-select-sm" style="width:auto; max-width:240px;">
-                        <option value="">— aucun (admins uniquement) —</option>
-                        {% for u in owner_candidates %}
-                        <option value="{{ u.id }}" {% if d.owner_id == u.id %}selected{% endif %}>{{ u.display_name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button class="btn btn-sm btn-outline-secondary" title="Enregistrer le responsable"><i class="fas fa-save"></i></button>
-                </form>
-                <span class="text-muted">gère le quiz et voit les statistiques du département.</span>
+            <div class="flex-grow-1" style="min-width:0;">
+                <div class="dept-name">{{ d.name }}</div>
+                <div class="dept-meta d-flex flex-wrap gap-2 align-items-center mt-1">
+                    <span class="badge-soft">{{ counts.get(d.slug, 0) }} SOP</span>
+                    <span title="Gère le quiz, voit les statistiques et valide les SOP du département">
+                        <i class="fas fa-user-tie"></i>
+                        {{ d.owner.display_name if d.owner else 'aucun responsable' }}
+                    </span>
+                    <span title="Peuvent créer et modifier les SOP du département">
+                        <i class="fas fa-user-edit"></i>
+                        {% if d.contributors %}
+                            {{ d.contributors | map(attribute='display_name') | join(', ') }}
+                        {% else %}aucun contributeur{% endif %}
+                    </span>
+                </div>
             </div>
+            <a href="{{ url_for('help.manage', department=d.slug) }}" class="btn btn-sm btn-outline-secondary" title="Arborescence du département"><i class="fas fa-sitemap"></i></a>
+            <button type="button" class="btn btn-sm btn-outline-secondary" title="Modifier"
+                    onclick='openDeptModal({{ {
+                        "id": d.id, "name": d.name, "icon": d.icon,
+                        "owner_id": d.owner_id or "",
+                        "contributor_ids": d.contributors | map(attribute="id") | list,
+                        "sops": counts.get(d.slug, 0),
+                    } | tojson }})'>
+                <i class="fas fa-edit"></i>
+            </button>
         </div>
         {% else %}
-        <p class="text-center text-muted py-4 mb-0">Aucun département. Créez-en un ci-dessus.</p>
+        <p class="text-center text-muted py-4 mb-0">Aucun département. Créez-en un avec « Nouveau département ».</p>
         {% endfor %}
     </div>
 </div>
+
+{# --- Create / edit overlay --- #}
+<div class="modal fade" id="deptModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form class="modal-content" method="POST" id="deptForm">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deptModalTitle">Département</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="contributors_present" value="1">
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Nom</label>
+                    <input type="text" name="name" id="deptName" class="form-control" required placeholder="ex : Production, Logistique…">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Icône (Font Awesome)</label>
+                    <input type="text" name="icon" id="deptIcon" class="form-control" placeholder="fa-store" value="fa-folder-open">
+                    <div class="form-text">Voir <a href="https://fontawesome.com/v5/search?o=r&m=free" target="_blank" rel="noopener">fontawesome.com</a> (ex : fa-store, fa-industry, fa-truck, fa-utensils).</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Responsable</label>
+                    <select name="owner_id" id="deptOwner" class="form-select">
+                        <option value="">— aucun (admins uniquement) —</option>
+                        {% for u in brand_users %}
+                        <option value="{{ u.id }}">{{ u.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Gère le quiz, voit les statistiques et valide les SOP du département.</div>
+                </div>
+                <div class="mb-1">
+                    <label class="form-label small text-muted mb-1">Contributeurs</label>
+                    <div class="border rounded p-2" style="max-height:220px; overflow-y:auto;">
+                        {% for u in brand_users %}
+                        <div class="form-check">
+                            <input class="form-check-input dept-contrib" type="checkbox"
+                                   name="contributor_ids" value="{{ u.id }}" id="contrib-{{ u.id }}">
+                            <label class="form-check-label" for="contrib-{{ u.id }}">{{ u.display_name }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="form-text">Peuvent créer et modifier les SOP de ce département (le responsable l'est d'office).</div>
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-outline-danger" id="deptDeleteBtn"
+                        onclick="submitDelete()"><i class="fas fa-trash"></i> Supprimer</button>
+                <div>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="submit" class="btn btn-brand">Enregistrer</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<form method="POST" id="deptDeleteForm" class="d-none"></form>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script>
+const CREATE_URL = "{{ url_for('help.department_create') }}";
+const UPDATE_URL = "{{ url_for('help.department_update', dept_id=0) }}";  // 0 -> replaced
+const DELETE_URL = "{{ url_for('help.department_delete', dept_id=0) }}";
+const REORDER_URL = "{{ url_for('help.departments_reorder') }}";
+let currentDept = null;
+
+function openDeptModal(dept) {
+    currentDept = dept;
+    const form = document.getElementById('deptForm');
+    document.getElementById('deptModalTitle').textContent =
+        dept ? ('Modifier « ' + dept.name + ' »') : 'Nouveau département';
+    form.action = dept ? UPDATE_URL.replace('/0/', '/' + dept.id + '/') : CREATE_URL;
+    document.getElementById('deptName').value = dept ? dept.name : '';
+    document.getElementById('deptIcon').value = dept ? dept.icon : 'fa-folder-open';
+    document.getElementById('deptOwner').value = dept ? String(dept.owner_id || '') : '';
+    document.querySelectorAll('.dept-contrib').forEach(cb => {
+        cb.checked = !!(dept && dept.contributor_ids.includes(parseInt(cb.value, 10)));
+    });
+    const del = document.getElementById('deptDeleteBtn');
+    del.classList.toggle('d-none', !dept);
+    del.disabled = !!(dept && dept.sops > 0);
+    del.title = (dept && dept.sops > 0) ? 'Impossible : le département contient des SOP.' : '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('deptModal')).show();
+}
+
+function submitDelete() {
+    if (!currentDept || !confirm('Supprimer ce département ? (uniquement s\'il est vide)')) return;
+    const f = document.getElementById('deptDeleteForm');
+    f.action = DELETE_URL.replace('/0/', '/' + currentDept.id + '/');
+    f.submit();
+}
+
+const list = document.getElementById('dept-list');
+if (list && list.querySelector('.dept-row')) {
+    new Sortable(list, {
+        handle: '.dept-handle', animation: 150,
+        onEnd: () => {
+            const ids = [...list.querySelectorAll('.dept-row')].map(r => parseInt(r.dataset.id, 10));
+            fetch(REORDER_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ids}),
+            });
+        },
+    });
+}
+</script>
 {% endblock %}

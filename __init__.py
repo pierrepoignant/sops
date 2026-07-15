@@ -83,6 +83,22 @@ def _upgrade_schema():
                         'WHERE brand IS NULL'))
     db.session.commit()
 
+    # 2026-07: the global 'contributor' role became per-department contributor
+    # lists. Seed each old contributor into the list of the department(s)
+    # matching their allocation, then fold them into 'staff'. Idempotent: no
+    # contributor-role users remain after the first run.
+    from auth.models import User
+    from help.models import SopDepartment, sop_department_contributors
+    legacy = User.query.filter_by(role='contributor').all()
+    for user in legacy:
+        if user.department:
+            for dept in SopDepartment.query.filter_by(slug=user.department).all():
+                if user not in dept.contributors:
+                    dept.contributors.append(user)
+        user.role = 'staff'
+    if legacy:
+        db.session.commit()
+
 
 def create_app(db_name='ovh', redis_server='localhost'):
     from dotenv import load_dotenv

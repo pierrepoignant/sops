@@ -132,8 +132,9 @@ def admin_set_role(user_id):
 @login_required
 @admin_required
 def admin_set_department(user_id):
-    """Allocate a user to a department (slug of the active brand, or empty to
-    clear). Scopes contributor edit rights, expected readers, notifications."""
+    """Allocate a user to their home department (slug of the active brand, or
+    empty to clear). Scopes expected readers, quiz audience, notifications —
+    edit rights are managed on the department's contributors list."""
     from flask import g
     from help.models import SopDepartment
     user = db.session.get(User, user_id)
@@ -533,6 +534,10 @@ def configuration():
         if mode not in ('owner', 'user'):
             flash('Choix invalide.', 'warning')
             return redirect(url_for('administration.configuration'))
+        publish_mode = request.form.get('publish_mode')
+        if publish_mode not in ('immediate', 'moderated'):
+            flash('Choix invalide.', 'warning')
+            return redirect(url_for('administration.configuration'))
         user_id = (request.form.get('approver_user_id') or '').strip()
         if mode == 'user':
             approver = db.session.get(User, int(user_id)) if user_id.isdigit() else None
@@ -541,12 +546,15 @@ def configuration():
                 return redirect(url_for('administration.configuration'))
             AppSetting.set(brand, 'sop_approver_user_id', str(approver.id))
         AppSetting.set(brand, 'sop_approver_mode', mode)
+        AppSetting.set(brand, 'sop_publish_mode', publish_mode)
         db.session.commit()
         flash('Configuration enregistrée.', 'success')
         return redirect(url_for('administration.configuration'))
 
     mode = AppSetting.get(brand, 'sop_approver_mode', 'owner')
     approver_id = AppSetting.get(brand, 'sop_approver_user_id')
+    publish_mode = AppSetting.get(brand, 'sop_publish_mode', 'immediate')
     users = sorted(_brand_users(brand), key=lambda u: u.display_name.lower())
     return render_template('administration/configuration.html',
-                           mode=mode, approver_id=approver_id, users=users)
+                           mode=mode, approver_id=approver_id,
+                           publish_mode=publish_mode, users=users)

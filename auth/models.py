@@ -3,9 +3,10 @@ from flask_login import UserMixin
 from datetime import datetime
 
 
-# admin: everything · contributor: edits the SOPs of their department ·
-# staff: reads, acknowledges, takes quizzes.
-ROLES = ('admin', 'contributor', 'staff')
+# admin: everything · staff: reads, acknowledges, takes quizzes. Edit rights
+# are granted per department via its contributors list (sop_department_
+# contributors); the former global 'contributor' role was migrated there.
+ROLES = ('admin', 'staff')
 
 
 class User(UserMixin, db.Model):
@@ -16,10 +17,10 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     role = db.Column(db.String(20), nullable=False, default='staff')
-    # Department allocation (SopDepartment slug within the user's brand).
-    # Scopes what a contributor can edit, who is expected to read a SOP, and
-    # who receives change-notification emails. Added post-launch — see
-    # _upgrade_schema().
+    # Home department (SopDepartment slug within the user's brand): who is
+    # expected to read a SOP, quiz audience, change-notification emails.
+    # Edit rights live on SopDepartment.contributors, not here. Added
+    # post-launch — see _upgrade_schema().
     department = db.Column(db.String(80), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
@@ -31,10 +32,6 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == 'admin'
-
-    @property
-    def is_contributor(self):
-        return self.role == 'contributor'
 
     @property
     def display_name(self):
