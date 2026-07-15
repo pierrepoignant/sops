@@ -100,27 +100,8 @@ class HelpArticle(db.Model):
         return bool(self.review_due and self.review_due < datetime.utcnow().date())
 
 
-class SopAttachment(db.Model):
-    """A file attached to one SOP. Bytes live in S3 (same bucket as the media
-    library, under sops/attachments/); this row is metadata + the S3 key."""
-    __tablename__ = 'sop_attachments'
-
-    id = db.Column(db.Integer, primary_key=True)
-    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
-                           nullable=False, index=True)
-    filename = db.Column(db.String(255), nullable=False)
-    content_type = db.Column(db.String(120), nullable=False,
-                             default='application/octet-stream')
-    s3_key = db.Column(db.String(512), nullable=False)
-    size = db.Column(db.Integer, default=0)
-    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-
-    article = db.relationship(
-        'HelpArticle',
-        backref=db.backref('attachments', cascade='all, delete-orphan',
-                           lazy='selectin', order_by='SopAttachment.created_at'))
-    uploaded_by = db.relationship('User')
+class FileAttachmentMixin:
+    """Display helpers shared by the SOP- and department-level attachments."""
 
     @property
     def size_human(self):
@@ -146,6 +127,57 @@ class SopAttachment(db.Model):
         if ct.startswith('video/'):
             return 'fa-file-video'
         return 'fa-file-alt'
+
+
+class SopAttachment(FileAttachmentMixin, db.Model):
+    """A file attached to one SOP. Bytes live in S3 (same bucket as the media
+    library, under sops/attachments/); this row is metadata + the S3 key.
+    ``folder`` optionally groups files under a named folder (flat, one level)."""
+    __tablename__ = 'sop_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    article_id = db.Column(db.Integer, db.ForeignKey('help_articles.id'),
+                           nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(120), nullable=False,
+                             default='application/octet-stream')
+    s3_key = db.Column(db.String(512), nullable=False)
+    size = db.Column(db.Integer, default=0)
+    folder = db.Column(db.String(160), nullable=True)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    article = db.relationship(
+        'HelpArticle',
+        backref=db.backref('attachments', cascade='all, delete-orphan',
+                           lazy='selectin', order_by='SopAttachment.created_at'))
+    uploaded_by = db.relationship('User')
+
+
+class SopDeptAttachment(FileAttachmentMixin, db.Model):
+    """A file attached to a whole department — documents that don't belong to
+    one SOP (plans, forms, posters…). Same shape as SopAttachment, with an
+    optional flat ``folder`` for grouping."""
+    __tablename__ = 'sop_dept_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    department_id = db.Column(db.Integer, db.ForeignKey('sop_departments.id'),
+                              nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(120), nullable=False,
+                             default='application/octet-stream')
+    s3_key = db.Column(db.String(512), nullable=False)
+    size = db.Column(db.Integer, default=0)
+    folder = db.Column(db.String(160), nullable=True)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    department = db.relationship(
+        'SopDepartment',
+        backref=db.backref('attachments', cascade='all, delete-orphan',
+                           lazy='selectin',
+                           order_by='SopDeptAttachment.created_at'))
+    uploaded_by = db.relationship('User')
 
 
 class SopVersion(db.Model):

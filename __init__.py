@@ -62,6 +62,9 @@ def _upgrade_schema():
         'media_assets': {
             'brand': 'VARCHAR(40)',
         },
+        'sop_attachments': {
+            'folder': 'VARCHAR(160)',
+        },
     }
     insp = sqla_inspect(db.engine)
     for table, columns in wanted.items():

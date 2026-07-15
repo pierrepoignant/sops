@@ -36,6 +36,19 @@
     .quiz-q .correct { color: #14683a; font-weight: 600; }
     .quiz-q .expl { font-size: 12px; color: var(--pim-text-muted); margin-top: 6px; }
     .quiz-q .src { font-size: 11.5px; color: var(--pim-text-muted); margin-top: 4px; }
+
+    .sop-file-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px;
+                    border-bottom: 1px solid var(--pim-border-light); }
+    .sop-file-row:last-child { border-bottom: none; }
+    .sop-file-row.f-in-folder { margin-left: 22px; }
+    .sop-file-row .f-ico { font-size: 22px; color: var(--pim-primary); width: 28px; text-align: center; }
+    .sop-file-row .f-name { font-weight: 600; color: var(--pim-link); text-decoration: none; overflow-wrap: anywhere; }
+    .sop-file-row .f-meta { font-size: 12px; color: var(--pim-text-muted); }
+    .sop-file-row .f-actions { margin-left: auto; }
+    .f-folder { font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+                color: var(--pim-text-secondary); margin: 14px 0 2px; }
+    .f-folder i { color: #e8b931; margin-right: 6px; }
+    .f-folder:first-child { margin-top: 0; }
     @media (max-width: 768px) {
         .sop-panel { padding: 14px; }
     }
@@ -52,6 +65,14 @@
                 <i class="fas fa-book-open"></i> Procédures
             </button>
         </li>
+        {% if dept_file_groups or can_manage_files %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-fichiers" type="button" role="tab">
+                <i class="fas fa-paperclip"></i> Fichiers
+                {% if dept.attachments %}<span class="badge rounded-pill">{{ dept.attachments | length }}</span>{% endif %}
+            </button>
+        </li>
+        {% endif %}
         {% if active_quizzes or can_manage_quiz %}
         <li class="nav-item" role="presentation">
             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-quiz" type="button" role="tab">
@@ -105,6 +126,68 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if dept_file_groups or can_manage_files %}
+        <div class="tab-pane fade" id="tab-fichiers" role="tabpanel">
+            <div class="sop-panel" style="max-width: 860px;">
+                <h3><i class="fas fa-paperclip"></i> Fichiers — {{ dept.name }}</h3>
+                <p class="text-muted" style="font-size:13px;">
+                    Documents du département (plans, formulaires, affiches…) qui ne sont pas
+                    liés à une procédure en particulier.
+                </p>
+                {% if dept_file_groups %}
+                {% for folder, atts in dept_file_groups %}
+                {% if folder %}
+                <div class="f-folder"><i class="fas fa-folder"></i> {{ folder }}</div>
+                {% endif %}
+                {% for att in atts %}
+                <div class="sop-file-row {% if folder %}f-in-folder{% endif %}">
+                    <i class="fas {{ att.icon }} f-ico"></i>
+                    <div>
+                        <a class="f-name" href="{{ url_for('help.dept_attachment_download', att_id=att.id) }}">{{ att.filename }}</a>
+                        <div class="f-meta">
+                            {{ att.size_human }} · {{ att.created_at.strftime('%d/%m/%Y') }}
+                            {% if att.uploaded_by %} · {{ att.uploaded_by.display_name }}{% endif %}
+                        </div>
+                    </div>
+                    <div class="f-actions">
+                        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('help.dept_attachment_download', att_id=att.id) }}" title="Télécharger">
+                            <i class="fas fa-download"></i>
+                        </a>
+                        {% if can_manage_files %}
+                        <form method="post" action="{{ url_for('help.dept_attachment_delete', att_id=att.id) }}" class="d-inline"
+                              onsubmit="return confirm('Supprimer ce fichier ?');">
+                            <button class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="fas fa-trash"></i></button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% endfor %}
+                {% else %}
+                <p class="text-muted mb-0"><i class="fas fa-paperclip"></i> Aucun fichier pour ce département.</p>
+                {% endif %}
+
+                {% if can_manage_files %}
+                <hr>
+                {% if storage_ok %}
+                <form method="post" action="{{ url_for('help.dept_attachment_upload', dept_slug=dept.slug) }}"
+                      enctype="multipart/form-data" class="d-flex gap-2 align-items-center flex-wrap">
+                    <input type="file" name="files" multiple class="form-control form-control-sm" style="max-width: 420px;">
+                    <input type="text" name="folder" list="dept-folders" class="form-control form-control-sm"
+                           style="max-width: 220px;" placeholder="Dossier (optionnel)">
+                    <datalist id="dept-folders">
+                        {% for f in dept_folders %}<option value="{{ f }}">{% endfor %}
+                    </datalist>
+                    <button class="btn btn-sm btn-brand"><i class="fas fa-upload"></i> Ajouter</button>
+                </form>
+                {% else %}
+                <p class="text-muted mb-0"><i class="fas fa-exclamation-triangle"></i> Le stockage S3 n'est pas configuré — envoi impossible.</p>
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
 
         {% if active_quizzes or can_manage_quiz %}
         <div class="tab-pane fade" id="tab-quiz" role="tabpanel">
@@ -236,7 +319,7 @@
 <script>
 // Open a quiz tab directly via #quiz / #quiz-admin (used after quiz actions).
 document.addEventListener('DOMContentLoaded', function () {
-    const map = {'#quiz': '#tab-quiz', '#quiz-admin': '#tab-quiz-admin'};
+    const map = {'#quiz': '#tab-quiz', '#quiz-admin': '#tab-quiz-admin', '#fichiers': '#tab-fichiers'};
     const target = map[window.location.hash];
     if (!target) return;
     const btn = document.querySelector(`.dept-tabs [data-bs-toggle="tab"][data-bs-target="${target}"]`);

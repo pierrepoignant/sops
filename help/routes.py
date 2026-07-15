@@ -14,7 +14,7 @@ from flask_login import login_required, current_user
 from init_db import db
 from help import help_bp
 from help.models import (HelpArticle, HelpCategory, SopDepartment,
-                         SopAttachment, SopVersion, SopRead,
+                         SopAttachment, SopDeptAttachment, SopVersion, SopRead,
                          SopArticleView, SopSearchLog, SopQuiz,
                          SopQuizQuestion, SopQuizAttempt)
 from help.html_clean import clean_article_html
@@ -312,12 +312,20 @@ def department(dept_slug):
             admin_quizzes.append({'quiz': q, 'n_attempts': len(attempts),
                                   'avg_pct': avg})
 
+    dept_file_groups = _group_by_folder(dept.attachments)
+    dept_folders = sorted({a.folder for a in dept.attachments if a.folder},
+                          key=str.lower)
+
     return render_template('help/department.html', dept=dept, tree=tree,
                            orphans=orphans, departments=_departments(brand),
                            can_manage_quiz=can_manage_quiz,
                            active_quizzes=active_quizzes,
                            admin_quizzes=admin_quizzes,
-                           ai_ok=_ai_configured())
+                           ai_ok=_ai_configured(),
+                           dept_file_groups=dept_file_groups,
+                           dept_folders=dept_folders,
+                           can_manage_files=_can_manage_dept_files(current_user, dept),
+                           storage_ok=storage.is_configured())
 
 
 @help_bp.route('/article/<slug>')
@@ -371,6 +379,10 @@ def article(slug):
                            can_verify=can_verify,
                            current_vno=current_vno, my_ack=my_ack,
                            ack_current=ack_current,
+                           file_groups=_group_by_folder(art.attachments),
+                           file_folders=sorted(
+                               {a.folder for a in art.attachments if a.folder},
+                               key=str.lower),
                            storage_ok=storage.is_configured())
 
 
@@ -989,6 +1001,30 @@ def delete(art_id):
 # --- Attachments ---
 
 ATTACHMENT_PREFIX = 'sops/attachments/'
+DEPT_ATTACHMENT_PREFIX = 'sops/dept-attachments/'
+
+
+def _attachment_folder_from_form():
+    """Optional flat folder name typed/picked on the upload form."""
+    folder = re.sub(r'\s+', ' ', request.form.get('folder') or '').strip()
+    return folder[:160] or None
+
+
+def _group_by_folder(attachments):
+    """[(folder_or_None, [attachments])] — root files first, then folders in
+    alphabetical order. Feeds the Fichiers panels."""
+    groups = {}
+    for att in attachments:
+        groups.setdefault(att.folder or None, []).append(att)
+    root = [(None, groups.pop(None))] if None in groups else []
+    return root + sorted(groups.items(), key=lambda kv: kv[0].lower())
+
+
+def _can_manage_dept_files(user, dept):
+    """Department files are managed by the department's editors, its owner and
+    admins."""
+    return (user_can_edit(user, dept.brand, dept.slug)
+            or user_owns_department(user, dept))
 
 
 @help_bp.route('/<int:art_id>/attachments', methods=['POST'])
@@ -1020,7 +1056,8 @@ def attachment_upload(art_id):
         db.session.add(SopAttachment(
             article_id=art.id, filename=f.filename,
             content_type=f.mimetype or 'application/octet-stream',
-            s3_key=key, size=len(data), uploaded_by_id=current_user.id))
+            s3_key=key, size=len(data), folder=_attachment_folder_from_form(),
+            uploaded_by_id=current_user.id))
         saved += 1
     db.session.commit()
     if saved:
@@ -1061,6 +1098,80 @@ def attachment_delete(att_id):
     db.session.commit()
     flash('Fichier supprimé.', 'success')
     return redirect(url_for('help.article', slug=slug) + '#fichiers')
+
+
+# --- Department attachments (documents not tied to one SOP) ---
+
+@help_bp.route('/d/<dept_slug>/attachments', methods=['POST'])
+@login_required
+def dept_attachment_upload(dept_slug):
+    brand = _brand()
+    dept = _get_department(dept_slug, brand)
+    if not dept:
+        abort(404)
+    if not _can_manage_dept_files(current_user, dept):
+        abort(403)
+    back = url_for('help.department', dept_slug=dept.slug) + '#fichiers'
+    if not storage.is_configured():
+        flash("Le stockage S3 n'est pas configuré.", 'warning')
+        return redirect(back)
+    files = [f for f in request.files.getlist('files') if f and f.filename]
+    if not files:
+        flash('Aucun fichier sélectionné.', 'warning')
+        return redirect(back)
+    saved = 0
+    for f in files:
+        data = f.read()
+        ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else 'bin'
+        key = f'{DEPT_ATTACHMENT_PREFIX}{dept.id}/{uuid.uuid4().hex}.{ext}'
+        try:
+            storage.put_object(key, data, f.mimetype or 'application/octet-stream')
+        except Exception as e:
+            flash(f"Échec de l'envoi de {f.filename} : {e}", 'danger')
+            continue
+        db.session.add(SopDeptAttachment(
+            department_id=dept.id, filename=f.filename,
+            content_type=f.mimetype or 'application/octet-stream',
+            s3_key=key, size=len(data), folder=_attachment_folder_from_form(),
+            uploaded_by_id=current_user.id))
+        saved += 1
+    db.session.commit()
+    if saved:
+        flash(f'{saved} fichier(s) ajouté(s).', 'success')
+    return redirect(back)
+
+
+@help_bp.route('/d/attachments/<int:att_id>/download')
+@login_required
+def dept_attachment_download(att_id):
+    att = db.session.get(SopDeptAttachment, att_id)
+    if not att or att.department.brand != _brand():
+        abort(404)
+    if not storage.is_configured():
+        abort(503)
+    try:
+        data, content_type = storage.get_object_bytes(att.s3_key)
+    except Exception:
+        abort(404)
+    resp = Response(data, mimetype=content_type or att.content_type)
+    resp.headers['Content-Disposition'] = f'attachment; filename="{att.filename}"'
+    return resp
+
+
+@help_bp.route('/d/attachments/<int:att_id>/delete', methods=['POST'])
+@login_required
+def dept_attachment_delete(att_id):
+    att = db.session.get(SopDeptAttachment, att_id)
+    if not att or att.department.brand != _brand():
+        abort(404)
+    if not _can_manage_dept_files(current_user, att.department):
+        abort(403)
+    dept_slug = att.department.slug
+    storage.delete_object(att.s3_key)
+    db.session.delete(att)
+    db.session.commit()
+    flash('Fichier supprimé.', 'success')
+    return redirect(url_for('help.department', dept_slug=dept_slug) + '#fichiers')
 
 
 # --- Versions ---
