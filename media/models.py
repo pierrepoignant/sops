@@ -8,6 +8,9 @@ class MediaAsset(db.Model):
     __tablename__ = 'media_assets'
 
     id = db.Column(db.Integer, primary_key=True)
+    # Owning brand (brands.py id). The library is scoped per brand: each host
+    # only lists/uploads its own assets. Serving stays cross-brand (embeds).
+    brand = db.Column(db.String(40), nullable=True, index=True)
     slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
     filename = db.Column(db.String(255), nullable=False)
     content_type = db.Column(db.String(120), nullable=False, default='application/octet-stream')

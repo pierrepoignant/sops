@@ -512,3 +512,41 @@ def stats():
         top_views=top_views, zero_rows=zero_rows,
         recent_searches=recent_searches, coverage=coverage,
         overdue=overdue, total_users=len(users))
+
+
+# --- Configuration ---
+
+@administration_bp.route('/configuration', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def configuration():
+    """Brand-level settings. First setting: who approves (verifies) SOPs —
+    the department owner (default) or one specific user."""
+    from flask import g
+    from administration.models import AppSetting
+    from help.routes import _brand_users
+
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+
+    if request.method == 'POST':
+        mode = request.form.get('approver_mode')
+        if mode not in ('owner', 'user'):
+            flash('Choix invalide.', 'warning')
+            return redirect(url_for('administration.configuration'))
+        user_id = (request.form.get('approver_user_id') or '').strip()
+        if mode == 'user':
+            approver = db.session.get(User, int(user_id)) if user_id.isdigit() else None
+            if not approver:
+                flash('Sélectionnez la personne qui approuve.', 'warning')
+                return redirect(url_for('administration.configuration'))
+            AppSetting.set(brand, 'sop_approver_user_id', str(approver.id))
+        AppSetting.set(brand, 'sop_approver_mode', mode)
+        db.session.commit()
+        flash('Configuration enregistrée.', 'success')
+        return redirect(url_for('administration.configuration'))
+
+    mode = AppSetting.get(brand, 'sop_approver_mode', 'owner')
+    approver_id = AppSetting.get(brand, 'sop_approver_user_id')
+    users = sorted(_brand_users(brand), key=lambda u: u.display_name.lower())
+    return render_template('administration/configuration.html',
+                           mode=mode, approver_id=approver_id, users=users)

@@ -59,6 +59,9 @@ def _upgrade_schema():
             'verified_at': 'DATETIME',
             'verified_by_id': 'INTEGER',
         },
+        'media_assets': {
+            'brand': 'VARCHAR(40)',
+        },
     }
     insp = sqla_inspect(db.engine)
     for table, columns in wanted.items():
@@ -69,6 +72,12 @@ def _upgrade_schema():
             if col not in existing:
                 db.session.execute(
                     text(f'ALTER TABLE {table} ADD COLUMN {col} {ddl}'))
+                if table == 'media_assets' and col == 'brand':
+                    # Everything uploaded before brand scoping (incl. the
+                    # seeded Sablésienne manual) belongs to sablesienne.
+                    db.session.execute(text(
+                        "UPDATE media_assets SET brand = 'sablesienne' "
+                        'WHERE brand IS NULL'))
     db.session.commit()
 
 

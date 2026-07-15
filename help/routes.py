@@ -76,6 +76,22 @@ def user_owns_department(user, dept):
     return user.is_admin or dept.owner_id == user.id
 
 
+def user_can_verify(user, dept, brand=None):
+    """Who may verify (approve) SOPs. Admins always can; otherwise it depends
+    on the admin Configuration screen: the department owner (default) or the
+    one specific user designated there."""
+    if not user or not user.is_authenticated or not dept:
+        return False
+    if user.is_admin:
+        return True
+    from administration.models import AppSetting
+    brand = brand or _brand()
+    if AppSetting.get(brand, 'sop_approver_mode', 'owner') == 'user':
+        uid = AppSetting.get(brand, 'sop_approver_user_id')
+        return bool(uid) and str(user.id) == str(uid)
+    return dept.owner_id == user.id
+
+
 def owned_departments(user, brand):
     """Departments whose stats/quiz this user manages (admin: all)."""
     if not user or not user.is_authenticated:
@@ -340,7 +356,7 @@ def article(slug):
               .order_by(SopRead.version_no.desc(), SopRead.id.desc()).first())
     ack_current = bool(my_ack and my_ack.version_no >= current_vno)
 
-    can_verify = user_owns_department(current_user, dept)
+    can_verify = user_can_verify(current_user, dept, brand)
     versions = []
     readers = []
     if can_edit or can_verify:
@@ -401,14 +417,15 @@ def acknowledge(art_id):
 @help_bp.route('/<int:art_id>/reviewed', methods=['POST'])
 @login_required
 def mark_reviewed(art_id):
-    """Verify a SOP — reserved to the department owner and admins. The
+    """Verify a SOP — reserved to the configured approver (department owner
+    by default, or the user designated in the admin Configuration) and admins. The
     verification is stamped on the current version, so the Versions tab shows
     exactly which state was checked and by whom."""
     brand = _brand()
     art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
     if not art:
         abort(404)
-    if not user_owns_department(current_user, _get_department(art.department, brand)):
+    if not user_can_verify(current_user, _get_department(art.department, brand), brand):
         abort(403)
     # Make sure there is a version to stamp (articles older than versioning
     # get their current state recorded as v1).

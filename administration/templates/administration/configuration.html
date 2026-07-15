@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration{% endblock %}
+{% block page_title %}Configuration{% endblock %}
+{% block page_subtitle %}Réglages de la plateforme pour {{ brand_name }}{% endblock %}
+
+{% block head %}
+<style>
+    .config-card { background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 18px 20px; max-width: 720px; }
+    .config-card h6 { font-weight: 700; margin-bottom: 4px; }
+    .config-help { color: #6c757d; font-size: 13px; margin-bottom: 14px; }
+    .btn-brand { background-color: var(--brand-primary); border-color: var(--brand-primary); color: white; }
+    .btn-brand:hover { background-color: var(--pim-primary-hover); border-color: var(--pim-primary-hover); color: white; }
+    .form-check { margin-bottom: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="config-card">
+    <h6><i class="fas fa-stamp me-1"></i> Approbation des SOP</h6>
+    <p class="config-help">Qui peut vérifier (approuver) les SOP ? Les administrateurs
+        peuvent toujours approuver, quel que soit ce réglage.</p>
+    <form method="POST" action="{{ url_for('administration.configuration') }}">
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="approver_mode" id="mode-owner"
+                   value="owner" {% if mode != 'user' %}checked{% endif %}
+                   onchange="document.getElementById('approver-select').disabled = true;">
+            <label class="form-check-label" for="mode-owner">
+                Le responsable du département
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="approver_mode" id="mode-user"
+                   value="user" {% if mode == 'user' %}checked{% endif %}
+                   onchange="document.getElementById('approver-select').disabled = false;">
+            <label class="form-check-label" for="mode-user">
+                Une personne spécifique
+            </label>
+        </div>
+        <div class="ms-4 mb-3" style="max-width: 360px;">
+            <select name="approver_user_id" id="approver-select" class="form-select form-select-sm"
+                    {% if mode != 'user' %}disabled{% endif %}>
+                <option value="">— Choisir un utilisateur —</option>
+                {% for u in users %}
+                <option value="{{ u.id }}" {% if approver_id and approver_id|int == u.id %}selected{% endif %}>
+                    {{ u.display_name }} ({{ u.email }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-sm btn-brand">
+            <i class="fas fa-save me-1"></i> Enregistrer
+        </button>
+    </form>
+</div>
+{% endblock %}

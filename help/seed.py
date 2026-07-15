@@ -64,6 +64,7 @@ def seed_media(app):
         if not storage.object_exists(key):
             storage.put_object(key, data, it.get('content_type', 'application/octet-stream'))
         db.session.add(MediaAsset(
+            brand=SEED_BRAND,
             slug=slug, filename=it['filename'],
             content_type=it.get('content_type', 'application/octet-stream'),
             s3_key=key, size=len(data), is_seed=True,

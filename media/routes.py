@@ -4,12 +4,17 @@ import unicodedata
 from datetime import datetime
 
 from flask import (render_template, request, jsonify, abort, Response,
-                   redirect, url_for, flash)
+                   redirect, url_for, flash, g)
 from flask_login import login_required, current_user
 
 from init_db import db
 from media import media_bp, storage
 from media.models import MediaAsset
+
+
+def _brand():
+    """Active brand id for this request (set by the app before_request hook)."""
+    return getattr(g, 'brand', None) or 'sablesienne'
 
 
 def _slugify(value, fallback='file'):
@@ -29,7 +34,8 @@ def _unique_slug(base):
 @media_bp.route('/')
 @login_required
 def index():
-    assets = MediaAsset.query.order_by(MediaAsset.created_at.desc()).all()
+    assets = (MediaAsset.query.filter_by(brand=_brand())
+              .order_by(MediaAsset.created_at.desc()).all())
     return render_template('media/index.html', assets=assets,
                            configured=storage.is_configured())
 
@@ -38,7 +44,8 @@ def index():
 @login_required
 def api_list():
     q = (request.args.get('q') or '').strip().lower()
-    query = MediaAsset.query.order_by(MediaAsset.created_at.desc())
+    query = (MediaAsset.query.filter_by(brand=_brand())
+             .order_by(MediaAsset.created_at.desc()))
     if q:
         query = query.filter(db.func.lower(MediaAsset.filename).like(f'%{q}%'))
     assets = query.limit(200).all()
@@ -74,6 +81,7 @@ def upload():
         except Exception as e:
             return jsonify(error=f'Échec de l\'envoi: {e}'), 502
         asset = MediaAsset(
+            brand=_brand(),
             slug=slug, filename=filename, content_type=content_type,
             s3_key=key, size=len(data), uploaded_by_id=current_user.id,
         )
@@ -109,7 +117,7 @@ def serve_file(slug):
 @login_required
 def delete(asset_id):
     asset = db.session.get(MediaAsset, asset_id)
-    if not asset:
+    if not asset or asset.brand != _brand():
         return jsonify(error='Introuvable'), 404
     storage.delete_object(asset.s3_key)
     db.session.delete(asset)
