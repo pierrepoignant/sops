@@ -1638,6 +1638,62 @@ def article_qr_poster(slug):
                            dept=_get_department(art.department))
 
 
+# --- PDF export ---
+
+def _pdf_url_fetcher(url):
+    """Resolve app-internal URLs without going through HTTP (WeasyPrint has no
+    session cookie): /media/file/<slug> is read straight from S3 and /static/*
+    from disk; anything else falls back to the default fetcher."""
+    from urllib.parse import urlparse, unquote
+    from weasyprint import default_url_fetcher
+    from flask import current_app
+    path = unquote(urlparse(url).path)
+    if path.startswith('/media/file/'):
+        from media.models import MediaAsset
+        asset = MediaAsset.query.filter_by(slug=path.rsplit('/', 1)[-1]).first()
+        if asset and storage.is_configured():
+            data, ctype = storage.get_object_bytes(asset.s3_key)
+            return {'string': data,
+                    'mime_type': (ctype or asset.content_type or
+                                  'application/octet-stream').split(';')[0]}
+        raise ValueError(f'media asset introuvable : {path}')
+    if path.startswith('/static/'):
+        from werkzeug.security import safe_join
+        fpath = safe_join(current_app.static_folder, path[len('/static/'):])
+        if fpath:
+            import mimetypes
+            with open(fpath, 'rb') as f:
+                return {'string': f.read(),
+                        'mime_type': mimetypes.guess_type(fpath)[0]
+                                     or 'application/octet-stream'}
+    return default_url_fetcher(url)
+
+
+@help_bp.route('/article/<slug>/pdf')
+@login_required
+def article_pdf(slug):
+    art = _article_or_404(slug, _brand())
+    try:
+        from weasyprint import HTML
+    except Exception:
+        flash("Export PDF indisponible sur ce serveur (WeasyPrint n'est pas "
+              "installé).", 'warning')
+        return redirect(url_for('help.article', slug=art.slug))
+    import segno
+    link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
+    qr_data_uri = segno.make(link, error='m').svg_data_uri(scale=6,
+                                                           dark='#1a1a1a')
+    html = render_template('help/article_pdf.html', art=art,
+                           dept=_get_department(art.department),
+                           current_vno=_current_version_no(art),
+                           link=link, qr_data_uri=qr_data_uri)
+    pdf = HTML(string=html, base_url=request.url_root,
+               url_fetcher=_pdf_url_fetcher).write_pdf()
+    resp = Response(pdf, mimetype='application/pdf')
+    resp.headers['Content-Disposition'] = f'attachment; filename="{art.slug}.pdf"'
+    return resp
+
+
 # --- Training quizzes (several per department) ---
 
 def _get_quiz(quiz_id, manage=False):

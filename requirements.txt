@@ -34,6 +34,9 @@ boto3==1.35.49
 # QR codes (SVG, no image deps) — printable SOP posters
 segno==1.6.6
 
+# PDF export of SOPs (needs libpango at runtime — see Dockerfile)
+weasyprint==63.1
+
 # HTML cleanup of article bodies (editor cruft removal)
 beautifulsoup4==4.15.0
 

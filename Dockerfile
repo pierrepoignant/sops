@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata curl \
+    libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Europe/Paris

@@ -150,6 +150,9 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()">
             <i class="fas fa-print"></i> Imprimer
         </button>
+        <a href="{{ url_for('help.article_pdf', slug=art.slug) }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-file-pdf"></i> PDF
+        </a>
         {% if can_edit %}
         <a href="{{ url_for('help.edit', art_id=art.id) }}" class="btn btn-sm btn-outline-secondary">
             <i class="fas fa-edit"></i> Modifier
