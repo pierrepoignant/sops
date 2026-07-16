@@ -1,6 +1,9 @@
-"""Post-import HTML cleanup for the SOPs imported by tools/import_sops.py.
+"""Post-import HTML cleanup for a brand's SOP articles.
 
-Fixes Word/mammoth conversion artifacts in the imported articles' body_html:
+Each article's body_html first goes through help.html_clean.clean_article_html
+(editor cruft: style/class/data attrs, attribute-less spans, Quill lists,
+empty spacer blocks), then through fixes for Word/mammoth conversion
+artifacts:
 
   - heading hierarchy: shift levels so each article's top body heading is h2
     (the page renders the article title above the body), keeping relative depth
@@ -11,12 +14,13 @@ Fixes Word/mammoth conversion artifacts in the imported articles' body_html:
     or a 1./2./3. sequence into real <ul>/<ol>
   - one known text fix: 'elevé de factures' -> 'Relevé de factures'
 
-Also refreshes search_text and rewrites the v1 SopVersion snapshot (content is
+Also refreshes search_text and — when the article's latest SopVersion snapshot
+matched the pre-clean body — rewrites that snapshot too (content is
 semantically the same document, so this is a correction, not a new version).
 
 Usage:
-    .venv/bin/python tools/fix_import_html.py --db sqlite --dry-run
-    .venv/bin/python tools/fix_import_html.py --db ovh
+    .venv/bin/python tools/fix_import_html.py --brand sablesienne --db sqlite --dry-run
+    .venv/bin/python tools/fix_import_html.py --brand sablesienne --db ovh
 """
 import argparse
 import os
@@ -25,7 +29,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-BRAND = 'essenciagua'
 HEADS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 
 BULLET_RE = re.compile(r'^\s*([•·▪‣◦]|o(?=[\s ])|-(?=\s))[\s ]*')
@@ -196,6 +199,7 @@ def fix_article(soup, title, stats):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--brand', default='essenciagua')
     ap.add_argument('--db', default='ovh')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--slug', help='only this article (for testing)')
@@ -208,19 +212,23 @@ def main():
     app = create_app(db_name=args.db)
     with app.app_context():
         from help.models import HelpArticle, SopVersion
+        from help.html_clean import clean_article_html
         from help.search import html_to_text
 
-        q = HelpArticle.query.filter_by(brand=BRAND)
+        q = HelpArticle.query.filter_by(brand=args.brand)
         if args.slug:
             q = q.filter_by(slug=args.slug)
         arts = q.order_by(HelpArticle.department, HelpArticle.sort_order).all()
 
         totals = {}
         for art in arts:
-            stats = {k: 0 for k in ('toc', 'anchors', 'empty_heads', 'dup_title',
-                                    'head_text', 'level_shift', 'lists_merged',
-                                    'fake_lists')}
-            soup = fix_article(BeautifulSoup(art.body_html, 'html.parser'),
+            stats = {k: 0 for k in ('editor', 'toc', 'anchors', 'empty_heads',
+                                    'dup_title', 'head_text', 'level_shift',
+                                    'lists_merged', 'fake_lists')}
+            cleaned = clean_article_html(art.body_html)
+            if cleaned != (art.body_html or '').strip():
+                stats['editor'] = 1
+            soup = fix_article(BeautifulSoup(cleaned, 'html.parser'),
                                art.title, stats)
             if not any(stats.values()):
                 continue
@@ -230,13 +238,17 @@ def main():
                 totals[k] = totals.get(k, 0) + v
             if args.dry_run:
                 continue
+            old_body = art.body_html
             art.body_html = str(soup)
             art.search_text = re.sub(
                 r'\s+', ' ',
                 f'{art.title} {html_to_text(art.body_html)}').strip()[:60000]
-            v1 = SopVersion.query.filter_by(article_id=art.id, version_no=1).first()
-            if v1:
-                v1.body_html = art.body_html
+            # The latest version snapshot mirrors the current body; keep it in
+            # sync so a later diff/restore doesn't resurrect the dirty HTML.
+            last = (SopVersion.query.filter_by(article_id=art.id)
+                    .order_by(SopVersion.version_no.desc()).first())
+            if last and last.body_html == old_body:
+                last.body_html = art.body_html
             db.session.commit()
 
         print(f"\n{'DRY RUN — ' if args.dry_run else ''}Totaux: " +
