@@ -1,0 +1,119 @@
+{# Shared image editor (rotate / flip / crop) for media assets, backed by
+   Cropper.js. Include once per page, then call
+   openImageEditor('/media/file/<slug>', onSavedCallback). Saving overwrites
+   the asset in place via POST /media/file/<slug>/replace. #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
+
+<style>
+    #imgEdStage { background: #2b2b2b; max-height: 62vh; }
+    #imgEdStage img { display: block; max-width: 100%; }
+    .img-ed-bar .btn { --bs-btn-padding-y: 4px; --bs-btn-padding-x: 10px; --bs-btn-font-size: 13px; }
+</style>
+
+<div class="modal fade" id="imgEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h5 class="modal-title" style="font-size:16px;"><i class="fas fa-crop-alt"></i> Éditer l'image</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="img-ed-bar d-flex flex-wrap gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEd.cropper.rotate(-90)" title="Pivoter à gauche"><i class="fas fa-undo"></i> 90°</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEd.cropper.rotate(90)" title="Pivoter à droite"><i class="fas fa-redo"></i> 90°</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEdFlip('x')" title="Miroir horizontal"><i class="fas fa-arrows-alt-h"></i></button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEdFlip('y')" title="Miroir vertical"><i class="fas fa-arrows-alt-v"></i></button>
+                    <span class="ms-2 text-muted align-self-center" style="font-size:12px;">
+                        <i class="fas fa-info-circle"></i> Tracez un cadre sur l'image pour rogner.
+                    </span>
+                    <button type="button" class="btn btn-outline-secondary ms-auto" onclick="imgEdReset()" title="Annuler les modifications"><i class="fas fa-eraser"></i> Réinitialiser</button>
+                </div>
+                <div id="imgEdStage"><img id="imgEdImg" alt=""></div>
+                <div id="imgEdError" class="text-danger mt-2" style="font-size:13px; display:none;"></div>
+            </div>
+            <div class="modal-footer py-2">
+                <button type="button" class="btn btn-sm btn-link text-muted" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-sm btn-brand" id="imgEdSave" onclick="imgEdSaveNow()">
+                    <i class="fas fa-save"></i> Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const imgEd = { cropper: null, url: null, mime: 'image/png', objectUrl: null, onSaved: null };
+
+function openImageEditor(url, onSaved) {
+    imgEd.url = url.split('?')[0];
+    imgEd.onSaved = onSaved || null;
+    document.getElementById('imgEdError').style.display = 'none';
+    const img = document.getElementById('imgEdImg');
+    // Fetch fresh bytes (bypasses stale cache) and remember the real mime type.
+    fetch(imgEd.url, { cache: 'reload' })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+        .then(blob => {
+            imgEd.mime = ['image/jpeg', 'image/webp'].includes(blob.type) ? blob.type : 'image/png';
+            if (imgEd.objectUrl) URL.revokeObjectURL(imgEd.objectUrl);
+            imgEd.objectUrl = URL.createObjectURL(blob);
+            img.src = imgEd.objectUrl;
+            if (imgEd.cropper) imgEd.cropper.destroy();
+            imgEd.cropper = new Cropper(img, { viewMode: 1, autoCrop: false, background: false });
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('imgEditorModal')).show();
+        })
+        .catch(e => alert("Impossible de charger l'image : " + e.message));
+}
+
+function imgEdFlip(axis) {
+    const d = imgEd.cropper.getData();
+    if (axis === 'x') imgEd.cropper.scaleX(-(d.scaleX || 1));
+    else imgEd.cropper.scaleY(-(d.scaleY || 1));
+}
+
+function imgEdReset() {
+    imgEd.cropper.reset();
+    imgEd.cropper.clear();
+}
+
+function imgEdSaveNow() {
+    const btn = document.getElementById('imgEdSave');
+    const err = document.getElementById('imgEdError');
+    err.style.display = 'none';
+    const canvas = imgEd.cropper.getCroppedCanvas({ maxWidth: 4096, maxHeight: 4096 });
+    if (!canvas) { err.textContent = 'Rien à enregistrer.'; err.style.display = ''; return; }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enregistrement…';
+    canvas.toBlob(async blob => {
+        try {
+            const fd = new FormData();
+            fd.append('file', blob, 'edited');
+            const resp = await fetch(imgEd.url + '/replace', { method: 'POST', body: fd });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+            bootstrap.Modal.getInstance(document.getElementById('imgEditorModal')).hide();
+            await imgEdRefreshDisplayed(imgEd.url);
+            if (imgEd.onSaved) imgEd.onSaved(imgEd.url);
+        } catch (e) {
+            err.textContent = 'Échec de l\'enregistrement : ' + e.message;
+            err.style.display = '';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-save"></i> Enregistrer';
+        }
+    }, imgEd.mime, 0.92);
+}
+
+// Re-display every <img> showing this URL: freshen the HTTP cache, force a
+// reload via a throwaway query string, then restore the canonical src (so
+// HTML saved from editors keeps the clean URL).
+async function imgEdRefreshDisplayed(url) {
+    try { await fetch(url, { cache: 'reload' }); } catch (e) { /* best effort */ }
+    document.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        if (src.split('?')[0].replace(location.origin, '') !== url) return;
+        img.addEventListener('load', () => img.setAttribute('src', url), { once: true });
+        img.setAttribute('src', url + '?r=' + Date.now());
+    });
+}
+</script>

@@ -19,6 +19,8 @@ class MediaAsset(db.Model):
     uploaded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     is_seed = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # Set when the bytes are replaced in place (image editor) — feeds the ETag.
+    updated_at = db.Column(db.DateTime, nullable=True)
 
     uploaded_by = db.relationship('User')
 

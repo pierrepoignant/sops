@@ -61,6 +61,7 @@ def _upgrade_schema():
         },
         'media_assets': {
             'brand': 'VARCHAR(40)',
+            'updated_at': 'DATETIME',
         },
         'sop_attachments': {
             'folder': 'VARCHAR(160)',

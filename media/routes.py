@@ -94,23 +94,69 @@ def upload():
     return jsonify(ok=True, assets=saved), 201
 
 
+def _asset_etag(asset):
+    stamp = asset.updated_at or asset.created_at
+    return f'"{asset.id}-{asset.size}-{int(stamp.timestamp())}"'
+
+
 @media_bp.route('/file/<slug>')
 @login_required
 def serve_file(slug):
     """Proxy the object from S3. Open to any authenticated user so that media
-    embedded in help articles renders for everyone."""
+    embedded in help articles renders for everyone. ETag + no-cache instead of
+    a long max-age so in-place edits (image editor) show up immediately while
+    unchanged assets still answer 304 without hitting S3."""
     asset = MediaAsset.query.filter_by(slug=slug).first()
     if not asset:
         abort(404)
     if not storage.is_configured():
         abort(503)
-    try:
-        data, content_type = storage.get_object_bytes(asset.s3_key)
-    except Exception:
-        abort(404)
-    resp = Response(data, mimetype=content_type or asset.content_type)
-    resp.headers['Cache-Control'] = 'public, max-age=86400'
+    etag = _asset_etag(asset)
+    if etag in (request.headers.get('If-None-Match') or ''):
+        resp = Response(status=304)
+    else:
+        try:
+            data, content_type = storage.get_object_bytes(asset.s3_key)
+        except Exception:
+            abort(404)
+        resp = Response(data, mimetype=content_type or asset.content_type)
+    resp.headers['ETag'] = etag
+    resp.headers['Cache-Control'] = 'no-cache'
     return resp
+
+
+@media_bp.route('/file/<slug>/replace', methods=['POST'])
+@login_required
+def replace_file(slug):
+    """Overwrite an image's bytes in place (image editor save). The slug, URL
+    and S3 key stay the same, so every SOP embedding the image shows the
+    edited version."""
+    asset = MediaAsset.query.filter_by(slug=slug).first()
+    if not asset:
+        abort(404)
+    if not asset.is_image:
+        return jsonify(error="Ce média n'est pas une image."), 400
+    if not storage.is_configured():
+        return jsonify(error="Le stockage S3 n'est pas configuré."), 503
+    f = request.files.get('file')
+    if not f:
+        return jsonify(error='Aucun fichier.'), 400
+    data = f.read()
+    if not data or len(data) > 25 * 1024 * 1024:
+        return jsonify(error='Image vide ou trop volumineuse (max 25 Mo).'), 400
+    # The editor sends a typed canvas blob; anything untyped keeps the
+    # asset's existing image content-type.
+    content_type = f.mimetype if (f.mimetype or '').startswith('image/') \
+        else asset.content_type
+    try:
+        storage.put_object(asset.s3_key, data, content_type)
+    except Exception as e:
+        return jsonify(error=f"Échec de l'envoi: {e}"), 502
+    asset.content_type = content_type
+    asset.size = len(data)
+    asset.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True, url=asset.url, size=asset.size)
 
 
 @media_bp.route('/<int:asset_id>/delete', methods=['POST'])

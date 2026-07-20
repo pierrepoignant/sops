@@ -59,6 +59,10 @@
                 <div class="text-muted">{{ (a.size / 1024) | round(0, 'floor') | int }} Ko{% if a.is_seed %} · seed{% endif %}</div>
                 <div class="media-actions">
                     <button class="btn btn-outline-secondary" onclick="copyUrl('{{ a.url }}')"><i class="fas fa-link"></i></button>
+                    {% if a.is_image %}
+                    <button class="btn btn-outline-secondary" title="Éditer (rotation, rognage…)"
+                            onclick="openImageEditor('{{ a.url }}')"><i class="fas fa-crop-alt"></i></button>
+                    {% endif %}
                     <button class="btn btn-outline-danger" onclick="delAsset({{ a.id }}, this)"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
@@ -75,6 +79,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_image_editor.html" %}
 <script>
 async function uploadFiles(files) {
     if (!files || !files.length) return;

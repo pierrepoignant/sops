@@ -285,5 +285,35 @@ document.getElementById('pickerSearch').addEventListener('input', function () {
     clearTimeout(pt);
     pt = setTimeout(() => loadPicker(this.value.trim()), 180);
 });
+
+// --- In-editor image editing: click an embedded media image -> floating
+// "Éditer l'image" button -> shared cropper modal (saves back to storage).
+const imgEditFab = document.createElement('button');
+imgEditFab.type = 'button';
+imgEditFab.className = 'btn btn-sm btn-dark';
+imgEditFab.style.cssText = 'position:absolute; z-index:50; display:none; opacity:.92;';
+imgEditFab.innerHTML = '<i class="fas fa-crop-alt"></i> Éditer l\'image';
+document.body.appendChild(imgEditFab);
+let fabTarget = null;
+
+quill.root.addEventListener('click', e => {
+    const img = e.target;
+    if (img.tagName === 'IMG' && (img.getAttribute('src') || '').startsWith('/media/file/')) {
+        fabTarget = img;
+        const r = img.getBoundingClientRect();
+        imgEditFab.style.left = (window.scrollX + r.left + 8) + 'px';
+        imgEditFab.style.top = (window.scrollY + r.top + 8) + 'px';
+        imgEditFab.style.display = '';
+    } else {
+        imgEditFab.style.display = 'none';
+    }
+});
+['scroll', 'resize'].forEach(ev =>
+    window.addEventListener(ev, () => { imgEditFab.style.display = 'none'; }, true));
+imgEditFab.addEventListener('click', () => {
+    imgEditFab.style.display = 'none';
+    if (fabTarget) openImageEditor(fabTarget.getAttribute('src'));
+});
 </script>
+{% include "_image_editor.html" %}
 {% endblock %}
