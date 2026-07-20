@@ -6,13 +6,14 @@
 <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 
 <style>
-    #imgEdStage { background: #2b2b2b; max-height: 62vh; }
+    #imgEditorModal .modal-dialog { max-width: min(96vw, 1400px); }
+    #imgEdStage { background: #2b2b2b; height: 72vh; }
     #imgEdStage img { display: block; max-width: 100%; }
     .img-ed-bar .btn { --bs-btn-padding-y: 4px; --bs-btn-padding-x: 10px; --bs-btn-font-size: 13px; }
 </style>
 
 <div class="modal fade" id="imgEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header py-2">
                 <h5 class="modal-title" style="font-size:16px;"><i class="fas fa-crop-alt"></i> Éditer l'image</h5>
