@@ -1640,23 +1640,57 @@ def article_qr_poster(slug):
 
 # --- PDF export ---
 
-def _pdf_url_fetcher(url):
+# Raster images are downsampled to PDF_DPI and recompressed — embedded
+# full-resolution screenshots otherwise balloon a department PDF to >20 MB.
+PDF_OPTIONS = {'optimize_images': True, 'jpeg_quality': 85, 'dpi': 150}
+
+
+def _prefetch_media(html):
+    """{slug: (bytes, content_type)} for every /media/file/<slug> referenced in
+    ``html``, fetched from S3 concurrently — WeasyPrint resolves resources one
+    by one and per-object latency dominates multi-article PDFs."""
+    slugs = set(re.findall(r'/media/file/([A-Za-z0-9_.~-]+)', html))
+    if not slugs or not storage.is_configured():
+        return {}
+    from concurrent.futures import ThreadPoolExecutor
+    from media.models import MediaAsset
+    assets = MediaAsset.query.filter(MediaAsset.slug.in_(slugs)).all()
+    # Client + bucket resolved here: the pool's threads have no app context.
+    client, bucket = storage.get_client(), storage.bucket()
+
+    def get(asset):
+        try:
+            obj = client.get_object(Bucket=bucket, Key=asset.s3_key)
+            return asset.slug, (obj['Body'].read(),
+                                obj.get('ContentType', 'application/octet-stream'))
+        except Exception:
+            return asset.slug, None
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return {slug: got for slug, got in ex.map(get, assets) if got}
+
+
+def _pdf_url_fetcher(url, media=None):
     """Resolve app-internal URLs without going through HTTP (WeasyPrint has no
-    session cookie): /media/file/<slug> is read straight from S3 and /static/*
-    from disk; anything else falls back to the default fetcher."""
+    session cookie): /media/file/<slug> comes from the ``media`` prefetch (or
+    straight from S3) and /static/* from disk; anything else falls back to the
+    default fetcher."""
     from urllib.parse import urlparse, unquote
     from weasyprint import default_url_fetcher
     from flask import current_app
     path = unquote(urlparse(url).path)
     if path.startswith('/media/file/'):
-        from media.models import MediaAsset
-        asset = MediaAsset.query.filter_by(slug=path.rsplit('/', 1)[-1]).first()
-        if asset and storage.is_configured():
-            data, ctype = storage.get_object_bytes(asset.s3_key)
-            return {'string': data,
-                    'mime_type': (ctype or asset.content_type or
-                                  'application/octet-stream').split(';')[0]}
-        raise ValueError(f'media asset introuvable : {path}')
+        slug = path.rsplit('/', 1)[-1]
+        got = (media or {}).get(slug)
+        if got is None:
+            from media.models import MediaAsset
+            asset = MediaAsset.query.filter_by(slug=slug).first()
+            if not (asset and storage.is_configured()):
+                raise ValueError(f'media asset introuvable : {path}')
+            got = storage.get_object_bytes(asset.s3_key)
+        data, ctype = got
+        return {'string': data,
+                'mime_type': (ctype or 'application/octet-stream').split(';')[0]}
     if path.startswith('/static/'):
         from werkzeug.security import safe_join
         fpath = safe_join(current_app.static_folder, path[len('/static/'):])
@@ -1687,10 +1721,70 @@ def article_pdf(slug):
                            dept=_get_department(art.department),
                            current_vno=_current_version_no(art),
                            link=link, qr_data_uri=qr_data_uri)
+    media = _prefetch_media(html)
     pdf = HTML(string=html, base_url=request.url_root,
-               url_fetcher=_pdf_url_fetcher).write_pdf()
+               url_fetcher=lambda u: _pdf_url_fetcher(u, media)
+               ).write_pdf(**PDF_OPTIONS)
     resp = Response(pdf, mimetype='application/pdf')
     resp.headers['Content-Disposition'] = f'attachment; filename="{art.slug}.pdf"'
+    return resp
+
+
+@help_bp.route('/d/<dept_slug>/pdf')
+@login_required
+def department_pdf(dept_slug):
+    """One PDF with every published SOP of the department, or of a single
+    category (L1 or L2) via ?category=<name>. ?dl=1 downloads; the default
+    inline rendering opens the browser PDF viewer, from which one prints."""
+    brand = _brand()
+    dept = _get_department(dept_slug, brand)
+    if not dept:
+        abort(404)
+    try:
+        from weasyprint import HTML
+    except Exception:
+        flash("Export PDF indisponible sur ce serveur (WeasyPrint n'est pas "
+              "installé).", 'warning')
+        return redirect(url_for('help.department', dept_slug=dept.slug))
+
+    tree, orphans = _reader_tree(brand, dept.slug)
+    category = request.args.get('category', '').strip()
+    doc_title = f'{dept.name} — SOP'
+    if category:
+        found = next((n for n in tree if n['name'] == category), None)
+        if not found:
+            found = next((dict(c, children=[]) for n in tree
+                          for c in n['children'] if c['name'] == category), None)
+        orphans = [] if found else [o for o in orphans if o['name'] == category]
+        if not found and not orphans:
+            abort(404)
+        tree = [found] if found else []
+        doc_title = category
+
+    arts = []
+    for n in tree:
+        arts.extend(n['articles'])
+        for c in n['children']:
+            arts.extend(c['articles'])
+    for o in orphans:
+        arts.extend(o['articles'])
+    if not arts:
+        flash('Aucun SOP publié à exporter.', 'warning')
+        return redirect(url_for('help.department', dept_slug=dept.slug))
+
+    link = request.url_root.rstrip('/') + url_for('help.department',
+                                                  dept_slug=dept.slug)
+    html = render_template('help/department_pdf.html', dept=dept,
+                           doc_title=doc_title, tree=tree, orphans=orphans,
+                           arts=arts, link=link, today=datetime.now())
+    media = _prefetch_media(html)
+    pdf = HTML(string=html, base_url=request.url_root,
+               url_fetcher=lambda u: _pdf_url_fetcher(u, media)
+               ).write_pdf(**PDF_OPTIONS)
+    resp = Response(pdf, mimetype='application/pdf')
+    disposition = 'attachment' if request.args.get('dl') else 'inline'
+    fname = _slugify(doc_title, fallback=dept.slug)
+    resp.headers['Content-Disposition'] = f'{disposition}; filename="{fname}.pdf"'
     return resp
 
 

@@ -5,6 +5,8 @@
 {% block page_subtitle %}<a href="{{ url_for('help.index') }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; Départements</a> · SOP {{ brand_name }}{% endblock %}
 
 {% block page_buttons %}
+<a href="{{ url_for('help.department_pdf', dept_slug=dept.slug) }}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Ouvrir le PDF de tous les SOP pour impression"><i class="fas fa-print"></i> Imprimer</a>
+<a href="{{ url_for('help.department_pdf', dept_slug=dept.slug, dl=1) }}" class="btn btn-sm btn-outline-secondary" title="Télécharger tous les SOP en un PDF"><i class="fas fa-file-pdf"></i> PDF</a>
 {% if can_edit_sops(dept.slug) %}
 <a href="{{ url_for('help.manage', department=dept.slug) }}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-cog"></i> Gérer</a>
 <a href="{{ url_for('help.new', department=dept.slug) }}" class="btn btn-sm btn-brand"><i class="fas fa-plus"></i> Nouveau SOP</a>
@@ -17,6 +19,9 @@
     .cat-card h3 { font-size: 15px; font-weight: 700; color: var(--pim-primary); margin-bottom: 12px; }
     .subcat-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
                     color: var(--pim-text-muted); margin: 14px 0 4px; }
+    .cat-pdf { float: right; white-space: nowrap; }
+    .cat-pdf a { color: var(--pim-text-muted); text-decoration: none; font-size: 12px; margin-left: 8px; }
+    .cat-pdf a:hover { color: var(--pim-primary); }
     .art-link { display: block; padding: 6px 0; color: var(--pim-text); text-decoration: none; font-size: 14px; border-bottom: 1px solid var(--pim-border-light); }
     .art-link:last-child { border-bottom: none; }
     .art-link:hover { color: var(--pim-primary); }
@@ -100,14 +105,20 @@
                 </a>
                 {% endfor %}
             {% endmacro %}
+            {% macro cat_pdf(name) %}
+                <span class="cat-pdf">
+                    <a href="{{ url_for('help.department_pdf', dept_slug=dept.slug, category=name) }}" target="_blank" title="Imprimer cette catégorie"><i class="fas fa-print"></i></a>
+                    <a href="{{ url_for('help.department_pdf', dept_slug=dept.slug, category=name, dl=1) }}" title="Télécharger cette catégorie en PDF"><i class="fas fa-file-pdf"></i></a>
+                </span>
+            {% endmacro %}
             <div class="row g-3">
                 {% for n in tree %}
                 <div class="col-12 col-lg-6">
                     <div class="cat-card">
-                        <h3>{{ n.name }}</h3>
+                        <h3>{{ cat_pdf(n.name) }}{{ n.name }}</h3>
                         {{ art_links(n.articles) }}
                         {% for c in n.children %}
-                        <div class="subcat-title">{{ c.name }}</div>
+                        <div class="subcat-title">{{ cat_pdf(c.name) }}{{ c.name }}</div>
                         {{ art_links(c.articles) }}
                         {% endfor %}
                     </div>
@@ -116,7 +127,7 @@
                 {% for o in orphans %}
                 <div class="col-12 col-lg-6">
                     <div class="cat-card">
-                        <h3>{{ o.name }}</h3>
+                        <h3>{{ cat_pdf(o.name) }}{{ o.name }}</h3>
                         {{ art_links(o.articles) }}
                     </div>
                 </div>

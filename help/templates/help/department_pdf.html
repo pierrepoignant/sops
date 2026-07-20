@@ -1,0 +1,82 @@
+<!doctype html>
+{# Standalone template rendered by WeasyPrint: every published SOP of a
+   department — or of one category when the route narrows the tree. #}
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>{{ doc_title }}</title>
+<style>
+    @page {
+        size: A4;
+        margin: 16mm 15mm 20mm;
+        @bottom-left {
+            {# | safe: HTML-escaping would corrupt this CSS string (e.g. ' → &#39;) #}
+            content: "{{ doc_title | replace('\\', '') | replace('"', "'") | safe }}";
+            font-size: 8pt; color: #888; font-family: sans-serif;
+        }
+        @bottom-right {
+            content: "Page " counter(page) " / " counter(pages);
+            font-size: 8pt; color: #888; font-family: sans-serif;
+        }
+    }
+{% include "help/_pdf_style.html" %}
+    .toc { margin: 14px 0 0; font-size: 10pt; }
+    .toc .toc-cat { font-weight: bold; margin: 10px 0 2px; }
+    .toc .toc-sub { font-weight: bold; font-size: 9pt; color: #555;
+                    text-transform: uppercase; letter-spacing: 0.4px; margin: 6px 0 2px 12px; }
+    .toc a { display: block; color: inherit; text-decoration: none; margin-left: 24px; padding: 1.5px 0; }
+    .toc a::after { content: target-counter(attr(href), page); float: right; color: #888; }
+
+    .sop { page-break-before: always; }
+    .sop h1.sop-title { font-size: 15pt; margin: 0 0 2px;
+                        border-bottom: 1.5px solid #1a1a1a; padding-bottom: 6px; }
+    .sop .sop-meta { font-size: 8.5pt; color: #666; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+    <div class="doc-header">
+        <img class="logo" src="{{ url_for('static', filename='brand/' ~ current_brand ~ '/logo.png') }}" alt="">
+        <h1>{{ doc_title }}</h1>
+    </div>
+    <div class="doc-meta">
+        Recueil de procédures · {{ arts | length }} SOP · exporté le {{ today.strftime('%d/%m/%Y') }}
+    </div>
+
+    <div class="toc">
+        {% macro toc_links(articles) %}
+            {% for a in articles %}<a href="#art-{{ a.id }}">{{ a.title }}</a>{% endfor %}
+        {% endmacro %}
+        {% for n in tree %}
+        <div class="toc-cat">{{ n.name }}</div>
+        {{ toc_links(n.articles) }}
+        {% for c in n.children %}
+        <div class="toc-sub">{{ c.name }}</div>
+        {{ toc_links(c.articles) }}
+        {% endfor %}
+        {% endfor %}
+        {% for o in orphans %}
+        <div class="toc-cat">{{ o.name }}</div>
+        {{ toc_links(o.articles) }}
+        {% endfor %}
+    </div>
+
+    {% for art in arts %}
+    <section class="sop" id="art-{{ art.id }}">
+        <h1 class="sop-title">{{ art.title }}</h1>
+        <div class="sop-meta">
+            {{ art.category }}
+            · Dernière modification : {{ art.updated_at.strftime('%d/%m/%Y') }}
+            {% if art.last_reviewed_at %} · Vérifié le {{ art.last_reviewed_at.strftime('%d/%m/%Y') }}{% endif %}
+        </div>
+        <div class="article-body">{{ art.body_html | safe }}</div>
+    </section>
+    {% endfor %}
+
+    <div class="doc-footer">
+        <div>
+            Version en ligne (peut avoir été mise à jour depuis cet export) :<br>
+            <strong>{{ link }}</strong>
+        </div>
+    </div>
+</body>
+</html>
