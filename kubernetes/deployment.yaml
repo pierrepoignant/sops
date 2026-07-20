@@ -41,10 +41,12 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "1"
-              memory: 512Mi
+              # WeasyPrint needs >1 GB while rendering a department-wide,
+              # image-heavy PDF export (512Mi got the pod OOM-killed).
+              memory: 2Gi
           startupProbe:
             httpGet:
               path: /healthz

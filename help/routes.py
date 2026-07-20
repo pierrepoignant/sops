@@ -1730,25 +1730,67 @@ def article_pdf(slug):
     return resp
 
 
+EXPORTS_PREFIX = 'sops/exports/'
+EXPORTS_KEEP = 3  # finished exports kept per (brand, department, category)
+
+
+def _run_pdf_export(app, export_id, html, base_url):
+    """Background thread: render + upload one export. WeasyPrint on a big
+    department takes minutes and >1 GB — never done inside the request."""
+    from weasyprint import HTML
+    from help.models import SopPdfExport
+    with app.app_context():
+        exp = db.session.get(SopPdfExport, export_id)
+        try:
+            media = _prefetch_media(html)
+            pdf = HTML(string=html, base_url=base_url,
+                       url_fetcher=lambda u: _pdf_url_fetcher(u, media)
+                       ).write_pdf(**PDF_OPTIONS)
+            key = f'{EXPORTS_PREFIX}{exp.brand}/{export_id}-{exp.filename}'
+            storage.put_object(key, pdf, 'application/pdf')
+            exp.s3_key, exp.size_bytes, exp.status = key, len(pdf), 'done'
+            db.session.commit()
+            # Prune older finished exports of the same scope.
+            old = (SopPdfExport.query
+                   .filter_by(brand=exp.brand, department=exp.department,
+                              category=exp.category, status='done')
+                   .order_by(SopPdfExport.created_at.desc())
+                   .offset(EXPORTS_KEEP).all())
+            for o in old:
+                if o.s3_key:
+                    storage.delete_object(o.s3_key)
+                db.session.delete(o)
+            db.session.commit()
+        except Exception as e:  # noqa: BLE001 — status must reach the page
+            db.session.rollback()
+            exp = db.session.get(SopPdfExport, export_id)
+            exp.status, exp.error = 'error', str(e)[:2000]
+            db.session.commit()
+
+
 @help_bp.route('/d/<dept_slug>/pdf')
 @login_required
 def department_pdf(dept_slug):
-    """One PDF with every published SOP of the department, or of a single
-    category (L1 or L2) via ?category=<name>. ?dl=1 downloads; the default
-    inline rendering opens the browser PDF viewer, from which one prints."""
+    """Export every published SOP of the department — or of one category (L1
+    or L2) via ?category=<name> — as a single PDF. Generation runs in a
+    background thread (big departments take minutes and were OOM-killing the
+    pod when done in-request); this page starts/reuses a job and shows its
+    progress plus previously generated files. ?dl=1 downloads the finished
+    file, the default opens it inline for printing."""
+    from help.models import SopPdfExport
     brand = _brand()
     dept = _get_department(dept_slug, brand)
     if not dept:
         abort(404)
     try:
-        from weasyprint import HTML
+        from weasyprint import HTML  # noqa: F401 — availability probe
     except Exception:
         flash("Export PDF indisponible sur ce serveur (WeasyPrint n'est pas "
               "installé).", 'warning')
         return redirect(url_for('help.department', dept_slug=dept.slug))
 
     tree, orphans = _reader_tree(brand, dept.slug)
-    category = request.args.get('category', '').strip()
+    category = request.args.get('category', '').strip() or None
     doc_title = f'{dept.name} — SOP'
     if category:
         found = next((n for n in tree if n['name'] == category), None)
@@ -1772,19 +1814,80 @@ def department_pdf(dept_slug):
         flash('Aucun SOP publié à exporter.', 'warning')
         return redirect(url_for('help.department', dept_slug=dept.slug))
 
-    link = request.url_root.rstrip('/') + url_for('help.department',
-                                                  dept_slug=dept.slug)
-    html = render_template('help/department_pdf.html', dept=dept,
-                           doc_title=doc_title, tree=tree, orphans=orphans,
-                           arts=arts, link=link, today=datetime.now())
-    media = _prefetch_media(html)
-    pdf = HTML(string=html, base_url=request.url_root,
-               url_fetcher=lambda u: _pdf_url_fetcher(u, media)
-               ).write_pdf(**PDF_OPTIONS)
-    resp = Response(pdf, mimetype='application/pdf')
+    dl = '1' if request.args.get('dl') else None
+    scope = dict(brand=brand, department=dept.slug, category=category)
+
+    # Fresh finished export (newer than the last SOP edit)? Serve it directly.
+    last = (SopPdfExport.query.filter_by(status='done', **scope)
+            .order_by(SopPdfExport.created_at.desc()).first())
+    newest_edit = max(a.updated_at for a in arts)
+    if last and last.created_at > newest_edit and not request.args.get('force'):
+        return redirect(url_for('help.export_file', export_id=last.id, dl=dl))
+
+    # Reuse a still-running job for the same scope; otherwise start one.
+    exp = (SopPdfExport.query.filter_by(status='running', **scope)
+           .order_by(SopPdfExport.created_at.desc()).first())
+    if exp and exp.is_stale:
+        exp.status, exp.error = 'error', 'Génération interrompue (serveur redémarré ?)'
+        db.session.commit()
+        exp = None
+    if not exp:
+        if not storage.is_configured():
+            flash("Le stockage S3 n'est pas configuré — export impossible.",
+                  'warning')
+            return redirect(url_for('help.department', dept_slug=dept.slug))
+        stamp = datetime.now().strftime('%Y%m%d-%H%M')
+        exp = SopPdfExport(doc_title=doc_title, n_articles=len(arts),
+                           filename=f'{_slugify(doc_title, fallback=dept.slug)}'
+                                    f'-{stamp}.pdf',
+                           created_by_id=current_user.id, **scope)
+        db.session.add(exp)
+        db.session.commit()
+        link = request.url_root.rstrip('/') + url_for('help.department',
+                                                      dept_slug=dept.slug)
+        html = render_template('help/department_pdf.html', dept=dept,
+                               doc_title=doc_title, tree=tree, orphans=orphans,
+                               arts=arts, link=link, today=datetime.now())
+        from threading import Thread
+        from flask import current_app
+        Thread(target=_run_pdf_export, daemon=True,
+               args=(current_app._get_current_object(), exp.id, html,
+                     request.url_root)).start()
+
+    previous = (SopPdfExport.query
+                .filter_by(brand=brand, department=dept.slug, status='done')
+                .order_by(SopPdfExport.created_at.desc()).limit(15).all())
+    return render_template('help/export_status.html', dept=dept, exp=exp,
+                           dl=dl, previous=[p for p in previous if p.id != exp.id])
+
+
+@help_bp.route('/export/<int:export_id>/status')
+@login_required
+def export_status(export_id):
+    from help.models import SopPdfExport
+    exp = db.session.get(SopPdfExport, export_id)
+    if not exp or exp.brand != _brand():
+        abort(404)
+    if exp.is_stale:
+        exp.status, exp.error = 'error', 'Génération interrompue (serveur redémarré ?)'
+        db.session.commit()
+    return jsonify(status=exp.status, error=exp.error)
+
+
+@help_bp.route('/export/<int:export_id>/file')
+@login_required
+def export_file(export_id):
+    from help.models import SopPdfExport
+    exp = db.session.get(SopPdfExport, export_id)
+    if not exp or exp.brand != _brand() or exp.status != 'done':
+        abort(404)
+    try:
+        data, _ctype = storage.get_object_bytes(exp.s3_key)
+    except Exception:
+        abort(404)
+    resp = Response(data, mimetype='application/pdf')
     disposition = 'attachment' if request.args.get('dl') else 'inline'
-    fname = _slugify(doc_title, fallback=dept.slug)
-    resp.headers['Content-Disposition'] = f'{disposition}; filename="{fname}.pdf"'
+    resp.headers['Content-Disposition'] = f'{disposition}; filename="{exp.filename}"'
     return resp
 
 

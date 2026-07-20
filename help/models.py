@@ -394,3 +394,42 @@ class SopQuizAttempt(db.Model):
         backref=db.backref('attempts', cascade='all, delete-orphan',
                            lazy='dynamic'))
     user = db.relationship('User')
+
+
+class SopPdfExport(db.Model):
+    """One generated department/category PDF export. Heavy WeasyPrint runs
+    happen in a background thread; the resulting file lives in S3 and past
+    exports stay downloadable from the export page."""
+    __tablename__ = 'sop_pdf_exports'
+
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False, index=True)
+    department = db.Column(db.String(80), nullable=False, index=True)
+    category = db.Column(db.String(160), nullable=True)  # None = whole dept
+    doc_title = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='running')
+    error = db.Column(db.Text, nullable=True)
+    s3_key = db.Column(db.String(255), nullable=True)
+    filename = db.Column(db.String(255), nullable=False)
+    size_bytes = db.Column(db.Integer, nullable=False, default=0)
+    n_articles = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'),
+                              nullable=True)
+
+    created_by = db.relationship('User')
+
+    @property
+    def size_human(self):
+        size = self.size_bytes or 0
+        for unit in ('o', 'Ko', 'Mo', 'Go'):
+            if size < 1024 or unit == 'Go':
+                return f'{size:.0f} {unit}' if unit == 'o' else f'{size:.1f} {unit}'
+            size /= 1024
+
+    @property
+    def is_stale(self):
+        """A run that never finished (e.g. the pod died mid-generation)."""
+        from datetime import timedelta
+        return (self.status == 'running'
+                and datetime.utcnow() - self.created_at > timedelta(minutes=15))

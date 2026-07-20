@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Export PDF · {{ dept.name }}{% endblock %}
+{% block page_title %}Export PDF — {{ exp.doc_title }}{% endblock %}
+{% block page_subtitle %}<a href="{{ url_for('help.department', dept_slug=dept.slug) }}" style="color:var(--pim-text-muted);text-decoration:none;">&larr; {{ dept.name }}</a>{% endblock %}
+
+{% block head %}
+<style>
+    .exp-wrap { max-width: 760px; }
+    .exp-card { background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+                padding: 22px 26px; display: flex; align-items: center; gap: 16px; }
+    .exp-card .spinner-border { color: var(--pim-primary); }
+    .exp-note { font-size: 12.5px; color: var(--pim-text-muted); margin-top: 6px; }
+    .exp-prev { background: white; border: 1px solid var(--pim-border); border-radius: 10px;
+                padding: 18px 24px; margin-top: 18px; }
+    .exp-prev h3 { font-size: 15px; font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="exp-wrap">
+    <div class="exp-card" id="exp-card">
+        {% if exp.status == 'done' %}
+        <span style="font-size:26px;color:#198754;"><i class="fas fa-check-circle"></i></span>
+        <div>
+            <strong>PDF prêt</strong> — {{ exp.n_articles }} SOP, {{ exp.size_human }}.
+            <div class="mt-2">
+                <a class="btn btn-sm btn-brand" href="{{ url_for('help.export_file', export_id=exp.id, dl=1) }}"><i class="fas fa-file-pdf"></i> Télécharger</a>
+                <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('help.export_file', export_id=exp.id) }}"><i class="fas fa-print"></i> Ouvrir pour imprimer</a>
+            </div>
+        </div>
+        {% elif exp.status == 'error' %}
+        <span style="font-size:26px;" class="text-danger"><i class="fas fa-exclamation-circle"></i></span>
+        <div>
+            <strong>La génération a échoué.</strong>
+            {% if exp.error %}<div class="exp-note">{{ exp.error }}</div>{% endif %}
+            <a class="btn btn-sm btn-outline-secondary mt-2"
+               href="{{ url_for('help.department_pdf', dept_slug=dept.slug, category=exp.category, dl=dl, force=1) }}">
+                <i class="fas fa-redo"></i> Réessayer
+            </a>
+        </div>
+        {% else %}
+        <div class="spinner-border" role="status"></div>
+        <div>
+            <strong>Génération du PDF en cours…</strong> ({{ exp.n_articles }} SOP)
+            <div class="exp-note">Cela peut prendre quelques minutes pour un département
+                riche en images. Cette page se mettra à jour automatiquement —
+                vous pouvez aussi revenir plus tard, le fichier restera disponible ici.</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if previous %}
+    <div class="exp-prev">
+        <h3><i class="fas fa-folder-open"></i> Exports précédents — {{ dept.name }}</h3>
+        <table class="table table-sm align-middle mb-0" style="font-size:13px;">
+            <thead><tr class="text-muted"><th>Document</th><th>Généré le</th><th class="text-end">Taille</th><th></th></tr></thead>
+            <tbody>
+            {% for p in previous %}
+            <tr>
+                <td><strong>{{ p.doc_title }}</strong>
+                    <div class="text-muted" style="font-size:11.5px;">{{ p.n_articles }} SOP{% if p.created_by %} · {{ p.created_by.display_name }}{% endif %}</div></td>
+                <td>{{ p.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                <td class="text-end">{{ p.size_human }}</td>
+                <td class="text-end" style="white-space:nowrap;">
+                    <a class="btn btn-sm btn-outline-secondary" target="_blank" title="Ouvrir pour imprimer"
+                       href="{{ url_for('help.export_file', export_id=p.id) }}"><i class="fas fa-print"></i></a>
+                    <a class="btn btn-sm btn-outline-secondary" title="Télécharger"
+                       href="{{ url_for('help.export_file', export_id=p.id, dl=1) }}"><i class="fas fa-download"></i></a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+{% if exp.status == 'running' %}
+<script>
+(function poll() {
+    setTimeout(function () {
+        fetch("{{ url_for('help.export_status', export_id=exp.id) }}")
+            .then(r => r.json())
+            .then(d => {
+                if (d.status === 'done') {
+                    {% if dl %}
+                    window.location = "{{ url_for('help.export_file', export_id=exp.id, dl=1) }}";
+                    setTimeout(() => window.location.reload(), 1500);
+                    {% else %}
+                    window.location.reload();
+                    {% endif %}
+                } else if (d.status === 'error') {
+                    window.location.reload();
+                } else {
+                    poll();
+                }
+            })
+            .catch(poll);
+    }, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}
