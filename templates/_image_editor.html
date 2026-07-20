@@ -58,10 +58,17 @@ function openImageEditor(url, onSaved) {
             imgEd.mime = ['image/jpeg', 'image/webp'].includes(blob.type) ? blob.type : 'image/png';
             if (imgEd.objectUrl) URL.revokeObjectURL(imgEd.objectUrl);
             imgEd.objectUrl = URL.createObjectURL(blob);
+            if (imgEd.cropper) { imgEd.cropper.destroy(); imgEd.cropper = null; }
             img.src = imgEd.objectUrl;
-            if (imgEd.cropper) imgEd.cropper.destroy();
-            imgEd.cropper = new Cropper(img, { viewMode: 1, autoCrop: false, background: false });
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('imgEditorModal')).show();
+            // Init the cropper only once the modal is visible: sized against a
+            // hidden (0×0) container it renders the image tiny.
+            const modalEl = document.getElementById('imgEditorModal');
+            const init = () => {
+                imgEd.cropper = new Cropper(img, { viewMode: 1, autoCrop: false, background: false });
+            };
+            if (modalEl.classList.contains('show')) init();
+            else modalEl.addEventListener('shown.bs.modal', init, { once: true });
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
         })
         .catch(e => alert("Impossible de charger l'image : " + e.message));
 }
