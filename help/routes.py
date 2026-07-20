@@ -1861,6 +1861,47 @@ def department_pdf(dept_slug):
                            dl=dl, previous=[p for p in previous if p.id != exp.id])
 
 
+@help_bp.route('/exports')
+@login_required
+def exports():
+    """All exportable PDF scopes of the brand — each department and each of
+    its categories — with the latest generated file and a (re)generate link."""
+    from help.models import SopPdfExport
+    brand = _brand()
+    latest = {}
+    for e in (SopPdfExport.query.filter_by(brand=brand, status='done')
+              .order_by(SopPdfExport.created_at.asc())):
+        latest[(e.department, e.category)] = e  # ascending: last write wins
+
+    def n_arts(node):
+        return len(node['articles']) + sum(n_arts(c) for c in node['children'])
+
+    depts = []
+    for dept in _departments(brand):
+        tree, orphans = _reader_tree(brand, dept.slug)
+        total = sum(n_arts(n) for n in tree) + sum(len(o['articles'])
+                                                   for o in orphans)
+        if not total:
+            continue
+        scopes = [{'category': None, 'label': f'{dept.name} — complet',
+                   'count': total, 'depth': 0,
+                   'export': latest.get((dept.slug, None))}]
+        for n in tree:
+            scopes.append({'category': n['name'], 'label': n['name'],
+                           'count': n_arts(n), 'depth': 1,
+                           'export': latest.get((dept.slug, n['name']))})
+            for c in n['children']:
+                scopes.append({'category': c['name'], 'label': c['name'],
+                               'count': len(c['articles']), 'depth': 2,
+                               'export': latest.get((dept.slug, c['name']))})
+        for o in orphans:
+            scopes.append({'category': o['name'], 'label': o['name'],
+                           'count': len(o['articles']), 'depth': 1,
+                           'export': latest.get((dept.slug, o['name']))})
+        depts.append({'dept': dept, 'scopes': scopes})
+    return render_template('help/exports.html', depts=depts)
+
+
 @help_bp.route('/export/<int:export_id>/status')
 @login_required
 def export_status(export_id):

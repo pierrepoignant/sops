@@ -70,7 +70,7 @@
         .user-name { font-weight: 600; color: #333; font-size: 14px; }
         .user-role { font-size: 12px; color: #6c757d; }
 
-        .sidebar-menu { padding: 20px 0; flex: 1; display: flex; flex-direction: column; }
+        .sidebar-menu { padding: 14px 0; flex: 1; display: flex; flex-direction: column; }
 
         .menu-label {
             padding: 4px 20px 8px; font-size: 11px; font-weight: 700;
@@ -95,20 +95,20 @@
         .sidebar.collapsed .menu-section-toggle i.section-icon { margin-right: 0; }
         .menu-sub-items { overflow: hidden; transition: max-height 0.3s ease; background: #f0f1f3; }
         .menu-sub-items.collapsed { max-height: 0 !important; }
-        .menu-sub-items .menu-item { padding: 8px 20px 8px 55px; font-size: 13px; border-left: none; }
+        .menu-sub-items .menu-item { padding: 6px 20px 6px 55px; font-size: 13px; border-left: none; }
         .menu-sub-items .menu-item i { font-size: 13px; width: 16px; margin-right: 10px; }
         .menu-sub-items .menu-item:hover { background: #e4e6e9; }
         .menu-sub-items .menu-item.active { background: rgba(var(--pim-primary-rgb), 0.10); }
 
         .menu-item {
             display: flex; align-items: center;
-            padding: 12px 20px; color: #495057;
+            padding: 7px 20px; color: #495057; font-size: 13.5px;
             text-decoration: none; transition: all 0.3s ease;
             border-left: 3px solid transparent;
         }
         .menu-item:hover { background: #e9ecef; color: #212529; border-left-color: var(--pim-primary); text-decoration: none; }
         .menu-item.active { background: rgba(var(--pim-primary-rgb), 0.10); color: var(--pim-primary); border-left-color: var(--pim-primary); }
-        .menu-item i { width: 20px; margin-right: 15px; text-align: center; font-size: 16px; }
+        .menu-item i { width: 20px; margin-right: 12px; text-align: center; font-size: 14px; }
         .menu-item .menu-title { flex: 1; white-space: nowrap; overflow: hidden; }
         .sidebar.collapsed .menu-item .menu-title { display: none; }
         .sidebar.collapsed .menu-item { padding: 12px 0; justify-content: center; }
@@ -240,6 +240,10 @@
                 <span class="menu-title">SOP</span>
             </a>
             {% endfor %}
+            <a href="{{ url_for('help.exports') }}" class="menu-item {% if request.endpoint == 'help.exports' %}active{% endif %}">
+                <i class="fas fa-file-pdf"></i>
+                <span class="menu-title">Exports PDF</span>
+            </a>
             {% endif %}
 
             {% if can_see_stats() and not current_user.is_admin %}

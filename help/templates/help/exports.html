@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Exports PDF · SOP {{ brand_name }}{% endblock %}
+{% block page_title %}Exports PDF{% endblock %}
+{% block page_subtitle %}Recueils de procédures imprimables — par département ou par catégorie{% endblock %}
+
+{% block head %}
+<style>
+    .xp-card { background: white; border: 1px solid var(--pim-border); border-radius: 12px;
+               padding: 18px 22px; margin-bottom: 18px; max-width: 980px; }
+    .xp-card h3 { font-size: 15px; font-weight: 700; color: var(--pim-primary); margin-bottom: 10px; }
+    .xp-card h3 i { margin-right: 8px; }
+    .xp-table td { vertical-align: middle; }
+    .xp-label { font-weight: 600; }
+    .xp-d1 .xp-label { font-weight: 400; padding-left: 22px; }
+    .xp-d2 .xp-label { font-weight: 400; padding-left: 44px; font-size: 12.5px; color: var(--pim-text-secondary); }
+    .xp-meta { font-size: 12px; color: var(--pim-text-muted); white-space: nowrap; }
+    .xp-none { font-size: 12px; color: var(--pim-text-muted); font-style: italic; }
+    .xp-actions { white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if not depts %}
+<p class="text-muted">Aucun SOP publié pour l'instant.</p>
+{% endif %}
+
+{% for row in depts %}
+<div class="xp-card">
+    <h3><i class="fas {{ row.dept.icon }}"></i>{{ row.dept.name }}</h3>
+    <div class="table-scroll" style="overflow-x:auto;">
+    <table class="table table-sm align-middle mb-0 xp-table" style="font-size:13.5px;">
+        <thead><tr class="text-muted" style="font-size:12px;">
+            <th>Document</th><th class="text-end">SOP</th>
+            <th>Dernier export</th><th class="text-end"></th>
+        </tr></thead>
+        <tbody>
+        {% for s in row.scopes %}
+        <tr class="xp-d{{ s.depth }}">
+            <td class="xp-label">{{ s.label }}</td>
+            <td class="text-end text-muted">{{ s.count }}</td>
+            <td>
+                {% if s.export %}
+                <span class="xp-meta">{{ s.export.created_at.strftime('%d/%m/%Y %H:%M') }} · {{ s.export.size_human }}</span>
+                {% else %}
+                <span class="xp-none">jamais généré</span>
+                {% endif %}
+            </td>
+            <td class="text-end xp-actions">
+                {% if s.export %}
+                <a class="btn btn-sm btn-outline-secondary" target="_blank" title="Ouvrir pour imprimer"
+                   href="{{ url_for('help.export_file', export_id=s.export.id) }}"><i class="fas fa-print"></i></a>
+                <a class="btn btn-sm btn-outline-secondary" title="Télécharger"
+                   href="{{ url_for('help.export_file', export_id=s.export.id, dl=1) }}"><i class="fas fa-download"></i></a>
+                {% endif %}
+                <a class="btn btn-sm btn-outline-secondary" title="{{ 'Régénérer (SOP modifiés depuis ?)' if s.export else 'Générer le PDF' }}"
+                   href="{{ url_for('help.department_pdf', dept_slug=row.dept.slug, category=s.category, force=1) }}">
+                    <i class="fas fa-sync-alt"></i> {{ 'Régénérer' if s.export else 'Générer' }}
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
