@@ -30,6 +30,15 @@
                     </span>
                     <button type="button" class="btn btn-outline-secondary ms-auto" onclick="imgEdReset()" title="Annuler les modifications"><i class="fas fa-eraser"></i> Réinitialiser</button>
                 </div>
+                <div class="img-ed-bar d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <label class="text-muted mb-0" style="font-size:12px;"><i class="fas fa-expand-arrows-alt"></i> Taille</label>
+                    <input type="range" id="imgEdScale" min="10" max="300" step="5" value="100" style="width:180px;" oninput="imgEdOnScaleInput(this.value)">
+                    <span id="imgEdScaleVal" style="font-size:12px; min-width:42px;">100 %</span>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEdSetScale(50)" title="Réduire de moitié">½</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEdSetScale(100)" title="Taille d'origine">1:1</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="imgEdSetScale(200)" title="Doubler">2×</button>
+                    <span id="imgEdDims" class="text-muted ms-2" style="font-size:12px;"></span>
+                </div>
                 <div id="imgEdStage"><img id="imgEdImg" alt=""></div>
                 <div id="imgEdError" class="text-danger mt-2" style="font-size:13px; display:none;"></div>
             </div>
@@ -44,7 +53,8 @@
 </div>
 
 <script>
-const imgEd = { cropper: null, url: null, mime: 'image/png', objectUrl: null, onSaved: null };
+const imgEd = { cropper: null, url: null, mime: 'image/png', objectUrl: null, onSaved: null,
+                scale: 1, baseCanvas: null };
 
 function openImageEditor(url, onSaved) {
     imgEd.url = url.split('?')[0];
@@ -63,8 +73,16 @@ function openImageEditor(url, onSaved) {
             // Init the cropper only once the modal is visible: sized against a
             // hidden (0×0) container it renders the image tiny.
             const modalEl = document.getElementById('imgEditorModal');
+            imgEdSetScale(100);
             const init = () => {
-                imgEd.cropper = new Cropper(img, { viewMode: 1, autoCrop: false, background: false });
+                imgEd.cropper = new Cropper(img, {
+                    viewMode: 1, autoCrop: false, background: false,
+                    // Any transform changes the output size: drop the cached
+                    // base canvas and refresh the dimensions readout.
+                    ready: imgEdInvalidateBase,
+                    cropend: imgEdInvalidateBase,
+                    zoom: imgEdInvalidateBase,
+                });
             };
             if (modalEl.classList.contains('show')) init();
             else modalEl.addEventListener('shown.bs.modal', init, { once: true });
@@ -77,19 +95,77 @@ function imgEdFlip(axis) {
     const d = imgEd.cropper.getData();
     if (axis === 'x') imgEd.cropper.scaleX(-(d.scaleX || 1));
     else imgEd.cropper.scaleY(-(d.scaleY || 1));
+    imgEdInvalidateBase();
 }
 
 function imgEdReset() {
     imgEd.cropper.reset();
     imgEd.cropper.clear();
+    imgEdSetScale(100);
+    imgEdInvalidateBase();
+}
+
+// --- Resize (scale the saved image up or down) ---------------------------
+
+// The "base" canvas is the image with rotation, mirroring and cropping already
+// applied, at its natural pixel size. We cache it and drop the cache whenever a
+// transform changes it, so the dimensions readout stays cheap while dragging.
+function imgEdBaseCanvas() {
+    if (!imgEd.baseCanvas && imgEd.cropper) {
+        imgEd.baseCanvas = imgEd.cropper.getCroppedCanvas({ maxWidth: 8192, maxHeight: 8192 });
+    }
+    return imgEd.baseCanvas;
+}
+
+function imgEdInvalidateBase() {
+    imgEd.baseCanvas = null;
+    imgEdUpdateDims();
+}
+
+function imgEdSetScale(pct) {
+    imgEd.scale = Math.max(0.1, Math.min(3, pct / 100));
+    const slider = document.getElementById('imgEdScale');
+    if (slider) slider.value = Math.round(imgEd.scale * 100);
+    imgEdUpdateDims();
+}
+
+function imgEdOnScaleInput(pct) {
+    imgEd.scale = Math.max(0.1, Math.min(3, pct / 100));
+    imgEdUpdateDims();
+}
+
+function imgEdUpdateDims() {
+    const valEl = document.getElementById('imgEdScaleVal');
+    const dimsEl = document.getElementById('imgEdDims');
+    if (valEl) valEl.textContent = Math.round(imgEd.scale * 100) + ' %';
+    if (!dimsEl) return;
+    const base = imgEdBaseCanvas();
+    if (!base) { dimsEl.textContent = ''; return; }
+    const w = Math.max(1, Math.round(base.width * imgEd.scale));
+    const h = Math.max(1, Math.round(base.height * imgEd.scale));
+    dimsEl.textContent = base.width + ' × ' + base.height + ' px → ' + w + ' × ' + h + ' px';
+}
+
+// Scale a source canvas to the current output size (returns it unchanged at 100%).
+function imgEdScaledCanvas(src) {
+    if (Math.round(imgEd.scale * 100) === 100) return src;
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(src.width * imgEd.scale));
+    out.height = Math.max(1, Math.round(src.height * imgEd.scale));
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, out.width, out.height);
+    return out;
 }
 
 function imgEdSaveNow() {
     const btn = document.getElementById('imgEdSave');
     const err = document.getElementById('imgEdError');
     err.style.display = 'none';
-    const canvas = imgEd.cropper.getCroppedCanvas({ maxWidth: 4096, maxHeight: 4096 });
-    if (!canvas) { err.textContent = 'Rien à enregistrer.'; err.style.display = ''; return; }
+    const base = imgEd.cropper.getCroppedCanvas({ maxWidth: 4096, maxHeight: 4096 });
+    if (!base) { err.textContent = 'Rien à enregistrer.'; err.style.display = ''; return; }
+    const canvas = imgEdScaledCanvas(base);
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enregistrement…';
     canvas.toBlob(async blob => {
