@@ -1703,6 +1703,75 @@ def _pdf_url_fetcher(url, media=None):
     return default_url_fetcher(url)
 
 
+# --- Approval circuit (the quality block printed on the PDF exports) ---
+
+def _designated_approver(dept, brand):
+    """The user who validates SOPs: the one named on the admin Configuration
+    screen, or — in the default mode — the department owner. Mirrors
+    user_can_verify()."""
+    from administration.models import AppSetting
+    from auth.models import User
+    if AppSetting.get(brand, 'sop_approver_mode', 'owner') == 'user':
+        uid = AppSetting.get(brand, 'sop_approver_user_id') or ''
+        return db.session.get(User, int(uid)) if str(uid).isdigit() else None
+    return dept.owner if dept else None
+
+
+def _fonction_label(user, dept, approver=None):
+    """Function printed next to a name. There is no job-title field, so it is
+    derived from what the platform already knows about the person: department
+    ownership, the brand's designated approver, the contributors list, the
+    admin role, then their home department."""
+    if not user:
+        return None
+    if dept and dept.owner_id == user.id:
+        return f'Responsable — {dept.name}'
+    if approver and approver.id == user.id:
+        return 'Approbateur désigné'
+    if dept and any(c.id == user.id for c in dept.contributors):
+        return f'Contributeur — {dept.name}'
+    if user.is_admin:
+        return 'Administrateur'
+    if dept and user.department and user.department == dept.slug:
+        return dept.name
+    return None
+
+
+def _approval_circuit(art, dept, brand):
+    """Who wrote, contributed to and validated this SOP — built only from data
+    the platform already records: the SopVersion trail (which version, edited by
+    whom, verified by whom and when) plus the department's designated approver.
+
+    Verification and validation are one and the same act here: only the
+    approver (department owner or the user named in Configuration) may stamp a
+    version, so their stamp is the validation visa."""
+    versions = sorted(art.versions, key=lambda v: v.version_no)
+    first = versions[0] if versions else None
+    current = versions[-1] if versions else None
+    author = (first.edited_by if first else None) or art.owner
+    contributors, seen = [], {author.id} if author else set()
+    for v in versions[1:]:
+        u = v.edited_by
+        if u and u.id not in seen:
+            seen.add(u.id)
+            contributors.append(u)
+    verified = next((v for v in reversed(versions) if v.verified_at), None)
+    approver = _designated_approver(dept, brand)
+    return {
+        'author': author,
+        'author_at': first.created_at if first else art.created_at,
+        'contributors': contributors,
+        'current_vno': current.version_no if current else 0,
+        'current_at': current.created_at if current else art.updated_at,
+        'verified': verified,
+        'verified_is_current': bool(verified and current
+                                    and verified.version_no == current.version_no),
+        'approver': approver,
+        # Called from the templates: fonction(user) -> label or None.
+        'fonction': lambda u: _fonction_label(u, dept, approver),
+    }
+
+
 @help_bp.route('/article/<slug>/pdf')
 @login_required
 def article_pdf(slug):
@@ -1717,9 +1786,11 @@ def article_pdf(slug):
     link = request.url_root.rstrip('/') + url_for('help.article', slug=art.slug)
     qr_data_uri = segno.make(link, error='m').svg_data_uri(scale=6,
                                                            dark='#1a1a1a')
-    html = render_template('help/article_pdf.html', art=art,
-                           dept=_get_department(art.department),
+    dept = _get_department(art.department)
+    html = render_template('help/article_pdf.html', art=art, dept=dept,
                            current_vno=_current_version_no(art),
+                           circuit=_approval_circuit(art, dept, _brand()),
+                           printed_at=datetime.now(),
                            link=link, qr_data_uri=qr_data_uri)
     media = _prefetch_media(html)
     pdf = HTML(string=html, base_url=request.url_root,
@@ -1847,7 +1918,9 @@ def department_pdf(dept_slug):
                                                       dept_slug=dept.slug)
         html = render_template('help/department_pdf.html', dept=dept,
                                doc_title=doc_title, tree=tree, orphans=orphans,
-                               arts=arts, link=link, today=datetime.now())
+                               arts=arts, link=link, today=datetime.now(),
+                               circuits={a.id: _approval_circuit(a, dept, brand)
+                                         for a in arts})
         from threading import Thread
         from flask import current_app
         Thread(target=_run_pdf_export, daemon=True,

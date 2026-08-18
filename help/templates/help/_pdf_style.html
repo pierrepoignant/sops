@@ -22,3 +22,36 @@
                   border-top: 1px solid #bbb; margin-top: 24px; padding-top: 10px;
                   font-size: 9pt; color: #555; page-break-inside: avoid; }
     .doc-footer img { width: 64px; height: 64px; }
+
+    /* --- Quality-document blocks: cartouche + approval circuit --- */
+    .cartouche { width: 100%; border-collapse: collapse; font-size: 8.5pt;
+                 margin: 8px 0 16px; }
+    .cartouche th, .cartouche td { border: 0.7pt solid #bbb; padding: 4px 8px;
+                                   text-align: left; vertical-align: middle; }
+    .cartouche th { width: 22mm; background: #f4f4f4; color: #555; font-weight: normal;
+                    text-transform: uppercase; font-size: 7.5pt; letter-spacing: 0.4px; }
+    .cartouche td { font-weight: bold; }
+
+    .approval { margin-top: 22px; page-break-inside: avoid; }
+    .approval h2 { font-size: 9pt; text-transform: uppercase; letter-spacing: 1px;
+                   color: #555; border-bottom: 1pt solid #1a1a1a;
+                   padding-bottom: 3px; margin: 0 0 8px; }
+    .approval table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+    .approval th, .approval td { border: 0.7pt solid #bbb; padding: 5px 8px;
+                                 text-align: left; vertical-align: top; }
+    .approval th { background: #f4f4f4; color: #555; font-weight: normal;
+                   text-transform: uppercase; font-size: 7.5pt; letter-spacing: 0.4px; }
+    .approval td.role { width: 30mm; font-weight: bold; }
+    .approval td.role span { display: block; font-weight: normal; color: #777;
+                             font-size: 7.5pt; }
+    .approval td.visa { width: 46mm; }
+    .approval .signed { color: #14682d; font-weight: bold; }
+    .approval .pending { color: #8a5300; font-style: italic; }
+    .approval .stamp { display: block; color: #777; font-size: 7.5pt; margin-top: 1px; }
+    .approval .note { font-size: 7.5pt; color: #777; margin: 6px 0 0; line-height: 1.35; }
+
+    /* Compact circuit line under each SOP of a department compendium. */
+    .sop-circuit { font-size: 8pt; color: #555; border-left: 2pt solid #ddd;
+                   padding-left: 8px; margin: 0 0 12px; }
+    .sop-circuit .lbl { color: #888; text-transform: uppercase; font-size: 7pt;
+                        letter-spacing: 0.4px; }

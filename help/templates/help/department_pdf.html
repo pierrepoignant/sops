@@ -61,13 +61,36 @@
     </div>
 
     {% for art in arts %}
+    {% set c = circuits.get(art.id) %}
     <section class="sop" id="art-{{ art.id }}">
         <h1 class="sop-title">{{ art.title }}</h1>
         <div class="sop-meta">
-            {{ art.category }}
-            · Dernière modification : {{ art.updated_at.strftime('%d/%m/%Y') }}
-            {% if art.last_reviewed_at %} · Vérifié le {{ art.last_reviewed_at.strftime('%d/%m/%Y') }}{% endif %}
+            {{ art.doc_reference }} · {{ art.category }}
+            · Version {% if c and c.current_vno %}v{{ c.current_vno }}{% else %}—{% endif %}
+            · Création : {{ art.created_at.strftime('%d/%m/%Y') }}
+            · Révision : {{ art.updated_at.strftime('%d/%m/%Y') }}
         </div>
+        {% if c %}
+        <div class="sop-circuit">
+            <span class="lbl">Établi par</span>
+            {{ c.author.display_name if c.author else '—' }}{% set f = c.fonction(c.author) %}{% if f %} ({{ f }}){% endif %}
+            {%- if c.author_at %}, le {{ c.author_at.strftime('%d/%m/%Y') }}{% endif %}
+            {%- if c.contributors %} · <span class="lbl">Contributeurs</span>
+            {% for u in c.contributors %}{% if not loop.first %}, {% endif %}{{ u.display_name }}{% endfor %}
+            {%- endif %}
+            <br>
+            <span class="lbl">Validé par</span>
+            {% if c.verified and c.verified.verified_by %}
+                {{ c.verified.verified_by.display_name }}{% set fv = c.fonction(c.verified.verified_by) %}{% if fv %} ({{ fv }}){% endif %},
+                visa électronique du {{ c.verified.verified_at.strftime('%d/%m/%Y à %H:%M') }} sur la v{{ c.verified.version_no }}
+                {%- if not c.verified_is_current %} — version en vigueur non vérifiée{% endif %}
+            {% elif c.approver %}
+                en attente de validation ({{ c.approver.display_name }})
+            {% else %}
+                en attente de validation
+            {% endif %}
+        </div>
+        {% endif %}
         <div class="article-body">{{ art.body_html | safe }}</div>
     </section>
     {% endfor %}
@@ -75,7 +98,10 @@
     <div class="doc-footer">
         <div>
             Version en ligne (peut avoir été mise à jour depuis cet export) :<br>
-            <strong>{{ link }}</strong>
+            <strong>{{ link }}</strong><br>
+            Recueil exporté le {{ today.strftime('%d/%m/%Y à %H:%M') }} —
+            <strong>copie non maîtrisée</strong>, vérifiez la version en vigueur
+            de chaque SOP avant utilisation.
         </div>
     </div>
 </body>

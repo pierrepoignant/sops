@@ -110,6 +110,13 @@ class HelpArticle(db.Model):
     last_reviewed_by = db.relationship('User', foreign_keys=[last_reviewed_by_id])
 
     @property
+    def doc_reference(self):
+        """Quality-document reference (SOP-BOU-014). Derived from the
+        department and the id — nothing is stored, so it needs no migration."""
+        prefix = ''.join(c for c in (self.department or '') if c.isalnum())[:3].upper()
+        return f'SOP-{prefix or "GEN"}-{(self.id or 0):03d}'
+
+    @property
     def review_overdue(self):
         return bool(self.review_due and self.review_due < datetime.utcnow().date())
 

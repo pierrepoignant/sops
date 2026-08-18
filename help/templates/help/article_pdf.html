@@ -1,6 +1,12 @@
 <!doctype html>
 {# Standalone template rendered by WeasyPrint for the "Télécharger en PDF"
-   button — no base.html, no interactive chrome. #}
+   button — no base.html, no interactive chrome.
+
+   It is a controlled quality document: the cartouche carries the reference,
+   the version in force and the creation/revision dates, and the approval
+   circuit at the end names who established and who validated it, with their
+   function and an electronic visa. Everything comes from the SopVersion trail
+   and the department's designated approver — see _approval_circuit(). #}
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -11,7 +17,7 @@
         margin: 16mm 15mm 20mm;
         @bottom-left {
             {# | safe: HTML-escaping would corrupt this CSS string (e.g. ' → &#39;) #}
-            content: "{{ ((dept.name ~ ' · ' if dept else '') ~ art.category) | replace('\\', '') | replace('"', "'") | safe }}";
+            content: "{{ (art.doc_reference ~ ' · ' ~ (dept.name ~ ' · ' if dept else '') ~ art.category) | replace('\\', '') | replace('"', "'") | safe }}";
             font-size: 8pt; color: #888; font-family: sans-serif;
         }
         @bottom-right {
@@ -27,21 +33,102 @@
         <img class="logo" src="{{ url_for('static', filename='brand/' ~ current_brand ~ '/logo.png') }}" alt="">
         <h1>{{ art.title }}</h1>
     </div>
-    <div class="doc-meta">
-        {% if dept %}{{ dept.name }} · {% endif %}{{ art.category }}
-        {% if current_vno %} · Version v{{ current_vno }}{% endif %}
-        · Dernière modification : {{ art.updated_at.strftime('%d/%m/%Y') }}
-        {% if art.last_reviewed_at %} · Vérifié le {{ art.last_reviewed_at.strftime('%d/%m/%Y') }}{% if art.last_reviewed_by %} par {{ art.last_reviewed_by.display_name }}{% endif %}{% endif %}
-        {% if art.owner %} · Responsable : {{ art.owner.display_name }}{% endif %}
-    </div>
+
+    <table class="cartouche">
+        <tr>
+            <th>Référence</th><td>{{ art.doc_reference }}</td>
+            <th>Version</th><td>{% if current_vno %}v{{ current_vno }}{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <th>Création</th><td>{{ art.created_at.strftime('%d/%m/%Y') }}</td>
+            <th>Révision</th><td>{{ art.updated_at.strftime('%d/%m/%Y') }}</td>
+        </tr>
+        <tr>
+            <th>Périmètre</th>
+            <td colspan="3">{% if dept %}{{ dept.name }} · {% endif %}{{ art.category }}</td>
+        </tr>
+        {% if art.review_due %}
+        <tr>
+            <th>Prochaine revue</th>
+            <td colspan="3">{{ art.review_due.strftime('%d/%m/%Y') }}{% if art.review_overdue %} — échue{% endif %}</td>
+        </tr>
+        {% endif %}
+    </table>
 
     <div class="article-body">{{ art.body_html | safe }}</div>
+
+    <section class="approval">
+        <h2>Circuit d'approbation</h2>
+        <table>
+            <tr>
+                <th>Rôle</th><th>Nom</th><th>Fonction</th><th>Date</th><th>Visa</th>
+            </tr>
+            <tr>
+                <td class="role">Établi par<span>Rédacteur</span></td>
+                <td>{{ circuit.author.display_name if circuit.author else '—' }}</td>
+                <td>{{ circuit.fonction(circuit.author) or '—' }}</td>
+                <td>{{ circuit.author_at.strftime('%d/%m/%Y') if circuit.author_at else '—' }}</td>
+                <td class="visa">
+                    {% if circuit.author %}
+                    <span class="signed">Visa électronique</span>
+                    <span class="stamp">{{ circuit.author_at.strftime('%d/%m/%Y à %H:%M') }}</span>
+                    {% else %}
+                    <span class="pending">Antérieur au suivi des versions</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% if circuit.contributors %}
+            <tr>
+                <td class="role">Contribué par<span>Rédacteurs suivants</span></td>
+                <td colspan="4">
+                    {% for u in circuit.contributors %}{% if not loop.first %} · {% endif %}{{ u.display_name }}{% set f = circuit.fonction(u) %}{% if f %} ({{ f }}){% endif %}{% endfor %}
+                </td>
+            </tr>
+            {% endif %}
+            <tr>
+                <td class="role">Validé par<span>Vérificateur / approbateur</span></td>
+                <td>
+                    {%- if circuit.verified %}{{ circuit.verified.verified_by.display_name if circuit.verified.verified_by else '—' }}
+                    {%- elif circuit.approver %}{{ circuit.approver.display_name }}
+                    {%- else %}—{% endif %}
+                </td>
+                <td>
+                    {%- if circuit.verified %}{{ circuit.fonction(circuit.verified.verified_by) or '—' }}
+                    {%- elif circuit.approver %}{{ circuit.fonction(circuit.approver) or '—' }}
+                    {%- else %}—{% endif %}
+                </td>
+                <td>{% if circuit.verified %}{{ circuit.verified.verified_at.strftime('%d/%m/%Y') }}{% else %}—{% endif %}</td>
+                <td class="visa">
+                    {% if circuit.verified and circuit.verified_is_current %}
+                    <span class="signed">Visa électronique</span>
+                    <span class="stamp">v{{ circuit.verified.version_no }} · {{ circuit.verified.verified_at.strftime('%d/%m/%Y à %H:%M') }}</span>
+                    {% elif circuit.verified %}
+                    <span class="pending">Version en vigueur non vérifiée</span>
+                    <span class="stamp">dernier visa : v{{ circuit.verified.version_no }} · {{ circuit.verified.verified_at.strftime('%d/%m/%Y') }}</span>
+                    {% else %}
+                    <span class="pending">En attente de validation</span>
+                    {% endif %}
+                </td>
+            </tr>
+        </table>
+        <p class="note">
+            Les visas sont des signatures électroniques : la plateforme enregistre
+            l'identité du signataire et l'horodatage de son action sur la version concernée.
+            La vérification d'une version par l'approbateur désigné — responsable du
+            département, ou l'utilisateur nommé dans la Configuration — vaut validation ;
+            il n'existe pas d'étape de vérification distincte de l'approbation.
+            La fonction affichée est déduite du rôle de la personne sur la plateforme.
+        </p>
+    </section>
 
     <div class="doc-footer">
         <img src="{{ qr_data_uri }}" alt="QR">
         <div>
             Version en ligne (peut avoir été mise à jour depuis cet export) :<br>
-            <strong>{{ link }}</strong>
+            <strong>{{ link }}</strong><br>
+            Document {{ art.doc_reference }}{% if current_vno %} v{{ current_vno }}{% endif %}
+            imprimé le {{ printed_at.strftime('%d/%m/%Y à %H:%M') }} —
+            <strong>copie non maîtrisée</strong>, vérifiez la version en vigueur avant utilisation.
         </div>
     </div>
 </body>
