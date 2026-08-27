@@ -1340,12 +1340,26 @@ def _attachment_folder_from_form():
     return folder[:160] or None
 
 
+def _attachment_sort_key(name):
+    """Sort key for a file name, reading embedded digits as numbers so that
+    ENR-2 comes before ENR-10 (a plain alphabetical sort puts 10 first).
+    Accents and case are ignored, and a numeric run sorts before text at the
+    same position."""
+    name = unicodedata.normalize('NFKD', name or '').encode('ascii', 'ignore').decode()
+    return [(int(part), '') if part.isdigit() else (float('inf'), part.lower())
+            for part in re.split(r'(\d+)', name) if part]
+
+
 def _group_by_folder(attachments):
     """[(folder_or_None, [attachments])] — root files first, then folders in
-    alphabetical order. Feeds the Fichiers panels."""
+    alphabetical order, and inside each group the files sorted by name/document
+    number rather than upload order (a bulk import would otherwise list them in
+    the order the files happened to be sent). Feeds the Fichiers panels."""
     groups = {}
     for att in attachments:
         groups.setdefault(att.folder or None, []).append(att)
+    for files in groups.values():
+        files.sort(key=lambda a: _attachment_sort_key(a.filename))
     root = [(None, groups.pop(None))] if None in groups else []
     return root + sorted(groups.items(), key=lambda kv: kv[0].lower())
 
