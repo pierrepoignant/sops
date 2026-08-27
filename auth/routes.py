@@ -1,4 +1,5 @@
 import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta
 
@@ -41,6 +42,25 @@ def _default_group():
     return grp
 
 
+def _oauth_redirect(fallback):
+    """Where Google should send the authorization code back to.
+
+    On the devserver every app shares ONE registered redirect URI — the auth
+    hub — because a provider matches redirect URIs exactly and takes no
+    wildcard, so a per-app URI means pasting a new one into the Google console
+    for every app on every box. The hub forwards the code on to us, using the
+    id in front of our state; it holds no client secret and does no token
+    exchange, so everything after this is unchanged.
+
+    Off the devserver OAUTH_HUB_CALLBACK is unset and this is exactly what it
+    always was.
+    """
+    hub = os.environ.get("OAUTH_HUB_CALLBACK")
+    if not hub:
+        return fallback, None
+    return hub, f"{os.environ.get('OAUTH_HUB_APP_ID', '')}~{secrets.token_urlsafe(16)}"
+
+
 @auth_bp.route('/login')
 def login():
     if current_user.is_authenticated:
@@ -56,8 +76,11 @@ def login_google():
     if not client:
         flash('Google OAuth not configured', 'error')
         return redirect(url_for('auth.login'))
-    redirect_uri = url_for('auth.google_callback', _external=True)
-    return client.authorize_redirect(redirect_uri)
+    redirect_uri, hub_state = _oauth_redirect(url_for('auth.google_callback', _external=True))
+    return client.authorize_redirect(
+        redirect_uri,
+        **({"state": hub_state} if hub_state else {}),
+    )
 
 
 @auth_bp.route('/login/google/callback')
