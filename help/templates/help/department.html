@@ -105,6 +105,16 @@
                 </a>
                 {% endfor %}
             {% endmacro %}
+            {# Sub-levels, however deep the brand's tree goes: each level is
+               indented one notch further than its parent. #}
+            {% macro subcats(nodes, level) %}
+                {% for c in nodes %}
+                <div class="subcat-title" style="margin-left: {{ (level - 1) * 12 }}px;">
+                    {{ cat_pdf(c.name) }}{{ c.name }}</div>
+                <div style="margin-left: {{ (level - 1) * 12 }}px;">{{ art_links(c.articles) }}</div>
+                {{ subcats(c.children, level + 1) }}
+                {% endfor %}
+            {% endmacro %}
             {% macro cat_pdf(name) %}
                 <span class="cat-pdf">
                     <a href="{{ url_for('help.department_pdf', dept_slug=dept.slug, category=name) }}" target="_blank" title="Imprimer cette catégorie"><i class="fas fa-print"></i></a>
@@ -117,10 +127,7 @@
                     <div class="cat-card">
                         <h3>{{ cat_pdf(n.name) }}{{ n.name }}</h3>
                         {{ art_links(n.articles) }}
-                        {% for c in n.children %}
-                        <div class="subcat-title">{{ cat_pdf(c.name) }}{{ c.name }}</div>
-                        {{ art_links(c.articles) }}
-                        {% endfor %}
+                        {{ subcats(n.children, 1) }}
                     </div>
                 </div>
                 {% endfor %}

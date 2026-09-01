@@ -127,14 +127,14 @@
                     <li><a class="dropdown-item {% if a.id == art.id %}active{% endif %}" href="{{ url_for('help.article', slug=a.slug) }}">{{ a.title }}</a></li>
                     {% endfor %}
                 {% endmacro %}
-                {% for n in tree %}
-                <li><h6 class="dropdown-header">{{ n.name }}</h6></li>
-                {{ jump_links(n.articles) }}
-                {% for c in n.children %}
-                <li><h6 class="dropdown-header ps-4">{{ c.name }}</h6></li>
-                {{ jump_links(c.articles) }}
-                {% endfor %}
-                {% endfor %}
+                {% macro jump_nodes(nodes, level) %}
+                    {% for n in nodes %}
+                    <li><h6 class="dropdown-header" style="padding-left: {{ 16 + level * 12 }}px;">{{ n.name }}</h6></li>
+                    {{ jump_links(n.articles) }}
+                    {{ jump_nodes(n.children, level + 1) }}
+                    {% endfor %}
+                {% endmacro %}
+                {{ jump_nodes(tree, 0) }}
                 {% for o in orphans %}
                 <li><h6 class="dropdown-header">{{ o.name }}</h6></li>
                 {{ jump_links(o.articles) }}

@@ -174,14 +174,42 @@ def _category_levels(brand, department):
     return by_parent.get(None, []), by_parent
 
 
+CATEGORY_DEPTH_CHOICES = (2, 3)
+DEFAULT_CATEGORY_DEPTH = 2
+
+
+def _category_depth(brand=None):
+    """How many category levels this brand uses — the ``sop_category_depth``
+    setting, 2 by default. The tree itself takes any depth; this is the cap the
+    admin UI and the reorder endpoint enforce."""
+    from administration.models import AppSetting
+    try:
+        n = int(AppSetting.get(brand or _brand(), 'sop_category_depth', '') or 0)
+    except (TypeError, ValueError):
+        return DEFAULT_CATEGORY_DEPTH
+    return n if n in CATEGORY_DEPTH_CHOICES else DEFAULT_CATEGORY_DEPTH
+
+
+def deepest_category_level(brand, department=None):
+    """Deepest level actually in use, so the Configuration screen can refuse to
+    shrink the tree under existing categories."""
+    q = HelpCategory.query.filter_by(brand=brand)
+    if department:
+        q = q.filter_by(department=department)
+    return max((c.depth for c in q.all()), default=1)
+
+
 def _category_options(brand, department):
     """[(name, depth)] in tree order for the article category dropdown."""
     roots, by_parent = _category_levels(brand, department)
     opts = []
-    for r in roots:
-        opts.append((r.name, 0))
-        for ch in by_parent.get(r.id, []):
-            opts.append((ch.name, 1))
+
+    def walk(cats, depth):
+        for c in cats:
+            opts.append((c.name, depth))
+            walk(by_parent.get(c.id, []), depth + 1)
+
+    walk(roots, 0)
     return opts
 
 
@@ -219,12 +247,15 @@ def _reader_tree(brand, department):
     def has_content(n):
         return bool(n['articles']) or any(has_content(c) for c in n['children'])
 
-    pruned = []
-    for n in tree:
-        n['children'] = [c for c in n['children'] if has_content(c)]
-        if has_content(n):
-            pruned.append(n)
-    return pruned, orphans
+    def prune(nodes):
+        kept = []
+        for n in nodes:
+            n['children'] = prune(n['children'])
+            if has_content(n):
+                kept.append(n)
+        return kept
+
+    return prune(tree), orphans
 
 
 def _dept_counts(brand):
@@ -347,10 +378,13 @@ def article(slug):
     tree, orphans = _reader_tree(brand, art.department)
     # Flat, display-ordered list of the department's SOPs for top-nav prev/next.
     flat = []
-    for n in tree:
-        flat.extend(n['articles'])
-        for c in n['children']:
-            flat.extend(c['articles'])
+
+    def flatten(nodes):
+        for n in nodes:
+            flat.extend(n['articles'])
+            flatten(n['children'])
+
+    flatten(tree)
     for o in orphans:
         flat.extend(o['articles'])
     ids = [a.id for a in flat]
@@ -668,12 +702,14 @@ def manage():
     dept = _manage_department(brand)
     if not dept:
         return render_template('help/manage.html', dept=None, tree=[], orphans=[],
-                               total=0, departments=[])
+                               total=0, departments=[],
+                               max_depth=DEFAULT_CATEGORY_DEPTH)
     articles = (HelpArticle.query
                 .filter_by(brand=brand, department=dept.slug)
                 .order_by(HelpArticle.sort_order, HelpArticle.title).all())
     tree, orphans = _build_tree(articles, brand, dept.slug)
     return render_template('help/manage.html', dept=dept, tree=tree, orphans=orphans,
+                           max_depth=_category_depth(brand),
                            total=len(articles),
                            departments=_editable_departments(brand))
 
@@ -885,8 +921,10 @@ def category_create():
     if parent_id:
         parent = HelpCategory.query.filter_by(id=int(parent_id), brand=brand,
                                               department=dept.slug).first()
-        if parent and parent.parent_id is not None:
-            parent = db.session.get(HelpCategory, parent.parent_id)
+        # Attach under the deepest ancestor the brand's depth allows.
+        max_depth = _category_depth(brand)
+        while parent is not None and parent.depth >= max_depth:
+            parent = parent.parent
     if not name:
         flash('Nom requis.', 'warning')
     elif HelpCategory.query.filter_by(brand=brand, department=dept.slug, name=name).first():
@@ -997,9 +1035,22 @@ def reorder():
         if pid not in cat_map or pid == cid:
             pid = None
         desired[cid] = pid
-    for cid, pid in desired.items():
-        if pid is not None and desired.get(pid) is not None:
-            return jsonify(ok=False, error='Profondeur maximale : 2 niveaux.'), 400
+    max_depth = _category_depth(brand)
+
+    def depth_of(cid, seen=None):
+        """Level a category would end up at once this payload is applied.
+        Categories the page did not send keep their stored parent."""
+        seen = seen or set()
+        if cid in seen or cid not in cat_map:
+            return 1
+        seen.add(cid)
+        pid = desired.get(cid, cat_map[cid].parent_id)
+        return 1 if pid is None else 1 + depth_of(pid, seen)
+
+    for cid in desired:
+        if depth_of(cid) > max_depth:
+            return jsonify(ok=False,
+                           error=f'Profondeur maximale : {max_depth} niveaux.'), 400
 
     for row in data.get('categories', []):
         cid = as_int(row.get('id'))
@@ -1877,11 +1928,23 @@ def department_pdf(dept_slug):
     tree, orphans = _reader_tree(brand, dept.slug)
     category = request.args.get('category', '').strip() or None
     doc_title = f'{dept.name} — SOP'
+    def find_node(nodes):
+        for n in nodes:
+            if n['name'] == category:
+                return n
+            hit = find_node(n['children'])
+            if hit:
+                return hit
+        return None
+
+    def subtree_articles(node):
+        arts = list(node['articles'])
+        for c in node['children']:
+            arts.extend(subtree_articles(c))
+        return arts
+
     if category:
-        found = next((n for n in tree if n['name'] == category), None)
-        if not found:
-            found = next((dict(c, children=[]) for n in tree
-                          for c in n['children'] if c['name'] == category), None)
+        found = find_node(tree)
         orphans = [] if found else [o for o in orphans if o['name'] == category]
         if not found and not orphans:
             abort(404)
@@ -1890,9 +1953,7 @@ def department_pdf(dept_slug):
 
     arts = []
     for n in tree:
-        arts.extend(n['articles'])
-        for c in n['children']:
-            arts.extend(c['articles'])
+        arts.extend(subtree_articles(n))
     for o in orphans:
         arts.extend(o['articles'])
     if not arts:
@@ -1973,14 +2034,14 @@ def exports():
         scopes = [{'category': None, 'label': f'{dept.name} — complet',
                    'count': total, 'depth': 0,
                    'export': latest.get((dept.slug, None))}]
-        for n in tree:
-            scopes.append({'category': n['name'], 'label': n['name'],
-                           'count': n_arts(n), 'depth': 1,
-                           'export': latest.get((dept.slug, n['name']))})
-            for c in n['children']:
-                scopes.append({'category': c['name'], 'label': c['name'],
-                               'count': len(c['articles']), 'depth': 2,
-                               'export': latest.get((dept.slug, c['name']))})
+        def add_scopes(nodes, depth):
+            for n in nodes:
+                scopes.append({'category': n['name'], 'label': n['name'],
+                               'count': n_arts(n), 'depth': depth,
+                               'export': latest.get((dept.slug, n['name']))})
+                add_scopes(n['children'], depth + 1)
+
+        add_scopes(tree, 1)
         for o in orphans:
             scopes.append({'category': o['name'], 'label': o['name'],
                            'count': len(o['articles']), 'depth': 1,

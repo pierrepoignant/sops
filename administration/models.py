@@ -31,6 +31,8 @@ class AppSetting(db.Model):
         sop_publish_mode      'immediate' (publish now, verify after, default)
                               | 'moderated' (contributor edits wait in the
                               validation queue as SopPendingChange rows)
+        sop_category_depth    how many category levels the SOP tree uses:
+                              '2' (default) or '3'
     """
     __tablename__ = 'app_settings'
 

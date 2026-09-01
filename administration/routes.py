@@ -521,11 +521,12 @@ def stats():
 @login_required
 @admin_required
 def configuration():
-    """Brand-level settings. First setting: who approves (verifies) SOPs —
-    the department owner (default) or one specific user."""
+    """Brand-level settings: who approves (verifies) SOPs, whether contributor
+    edits are moderated, and how many levels the SOP category tree uses."""
     from flask import g
     from administration.models import AppSetting
-    from help.routes import _brand_users
+    from help.routes import (_brand_users, _category_depth,
+                             deepest_category_level, CATEGORY_DEPTH_CHOICES)
 
     brand = getattr(g, 'brand', None) or 'sablesienne'
 
@@ -538,6 +539,19 @@ def configuration():
         if publish_mode not in ('immediate', 'moderated'):
             flash('Choix invalide.', 'warning')
             return redirect(url_for('administration.configuration'))
+        try:
+            depth = int(request.form.get('category_depth') or 0)
+        except ValueError:
+            depth = 0
+        if depth not in CATEGORY_DEPTH_CHOICES:
+            flash('Choix invalide.', 'warning')
+            return redirect(url_for('administration.configuration'))
+        in_use = deepest_category_level(brand)
+        if depth < in_use:
+            flash(f'Impossible de passer à {depth} niveaux : des catégories de '
+                  f'niveau {in_use} existent déjà. Remontez-les d\'abord dans '
+                  'Gérer les SOP.', 'warning')
+            return redirect(url_for('administration.configuration'))
         user_id = (request.form.get('approver_user_id') or '').strip()
         if mode == 'user':
             approver = db.session.get(User, int(user_id)) if user_id.isdigit() else None
@@ -547,6 +561,7 @@ def configuration():
             AppSetting.set(brand, 'sop_approver_user_id', str(approver.id))
         AppSetting.set(brand, 'sop_approver_mode', mode)
         AppSetting.set(brand, 'sop_publish_mode', publish_mode)
+        AppSetting.set(brand, 'sop_category_depth', str(depth))
         db.session.commit()
         flash('Configuration enregistrée.', 'success')
         return redirect(url_for('administration.configuration'))
@@ -557,4 +572,6 @@ def configuration():
     users = sorted(_brand_users(brand), key=lambda u: u.display_name.lower())
     return render_template('administration/configuration.html',
                            mode=mode, approver_id=approver_id,
-                           publish_mode=publish_mode, users=users)
+                           publish_mode=publish_mode, users=users,
+                           category_depth=_category_depth(brand),
+                           depth_in_use=deepest_category_level(brand))

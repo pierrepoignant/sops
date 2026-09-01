@@ -70,7 +70,36 @@
                     elle n'est visible qu'après approbation dans la file de validation.</span>
             </label>
         </div>
-        <button type="submit" class="btn btn-sm btn-brand mt-2">
+        <hr class="my-3">
+        <h6><i class="fas fa-sitemap me-1"></i> Niveaux de classement des SOP</h6>
+        <p class="config-help">Profondeur de l'arborescence des catégories, dans
+            chaque département de la marque.</p>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="category_depth" id="depth-2"
+                   value="2" {% if category_depth != 3 %}checked{% endif %}
+                   {% if depth_in_use > 2 %}disabled{% endif %}>
+            <label class="form-check-label" for="depth-2">
+                2 niveaux
+                <span class="config-help d-block mb-0">Catégorie &rsaquo; sous-catégorie.</span>
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="radio" name="category_depth" id="depth-3"
+                   value="3" {% if category_depth == 3 or depth_in_use > 2 %}checked{% endif %}>
+            <label class="form-check-label" for="depth-3">
+                3 niveaux
+                <span class="config-help d-block mb-0">Catégorie &rsaquo; sous-catégorie
+                    &rsaquo; sous-sous-catégorie.</span>
+            </label>
+        </div>
+        {% if depth_in_use > 2 %}
+        <p class="config-help ms-4 mb-0">
+            <i class="fas fa-info-circle"></i> Des catégories de niveau {{ depth_in_use }}
+            existent : pour revenir à 2 niveaux, remontez-les d'abord dans
+            <a href="{{ safe_url_for('help.manage') }}">Gérer les SOP</a>.
+        </p>
+        {% endif %}
+        <button type="submit" class="btn btn-sm btn-brand mt-3">
             <i class="fas fa-save me-1"></i> Enregistrer
         </button>
     </form>

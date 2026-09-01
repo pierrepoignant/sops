@@ -17,14 +17,16 @@ never user-selectable. Theming is keyed off `<body data-brand="…">` via
 ## Content model
 
 ```
-brand → department → category L1 → category L2 → SOP
+brand → department → category L1 → category L2 [→ category L3] → SOP
 ```
 
 - **Department** (`SopDepartment`) — top level, per brand. The first one is
   **Boutique** for La Sablésienne (the existing boutique manual, seeded at
   startup from `help/seed/` + `media/seed/`).
-- **Category** (`HelpCategory`) — up to two levels (`parent_id`), scoped to a
-  brand + department.
+- **Category** (`HelpCategory`) — a `parent_id` tree scoped to a brand +
+  department. How many levels a brand uses is the `sop_category_depth` setting
+  (2 by default, 3 available), set per brand on the admin Configuration screen;
+  it cannot be lowered while deeper categories still exist.
 - **SOP** (`HelpArticle`) — the procedure, in a category.
 
 ## Modules (blueprints)

@@ -50,9 +50,13 @@ class SopDepartment(db.Model):
 
 
 class HelpCategory(db.Model):
-    """Managed category, up to two levels, scoped to a (brand, department). L1 =
-    ``parent_id`` is NULL; L2 points at an L1 via ``parent_id``. Articles
-    reference a category by its name string (unique within brand+department)."""
+    """Managed category tree, scoped to a (brand, department). L1 =
+    ``parent_id`` is NULL; deeper levels point at their parent. Articles
+    reference a category by its name string (unique within brand+department).
+
+    The tree itself takes any depth; how many levels a brand actually uses is
+    the ``sop_category_depth`` setting (see AppSetting), enforced by the UI and
+    by the reorder endpoint."""
     __tablename__ = 'help_categories'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -76,6 +80,20 @@ class HelpCategory(db.Model):
     @property
     def is_sub(self):
         return self.parent_id is not None
+
+    @property
+    def depth(self):
+        """1-based level: an L1 category is 1, its child 2, and so on. The walk
+        is guarded against a cycle so a corrupt parent chain cannot hang a
+        page render."""
+        level, node, seen = 1, self, {self.id}
+        while node is not None and node.parent_id and node.parent_id not in seen:
+            seen.add(node.parent_id)
+            node = node.parent
+            if node is None:
+                break
+            level += 1
+        return level
 
 
 class HelpArticle(db.Model):

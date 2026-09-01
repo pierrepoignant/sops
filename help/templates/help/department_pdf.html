@@ -46,14 +46,18 @@
         {% macro toc_links(articles) %}
             {% for a in articles %}<a href="#art-{{ a.id }}">{{ a.title }}</a>{% endfor %}
         {% endmacro %}
-        {% for n in tree %}
-        <div class="toc-cat">{{ n.name }}</div>
-        {{ toc_links(n.articles) }}
-        {% for c in n.children %}
-        <div class="toc-sub">{{ c.name }}</div>
-        {{ toc_links(c.articles) }}
-        {% endfor %}
-        {% endfor %}
+        {% macro toc_nodes(nodes, level) %}
+            {% for n in nodes %}
+            {% if level == 0 %}
+            <div class="toc-cat">{{ n.name }}</div>
+            {% else %}
+            <div class="toc-sub" style="margin-left: {{ level * 12 }}px;">{{ n.name }}</div>
+            {% endif %}
+            {{ toc_links(n.articles) }}
+            {{ toc_nodes(n.children, level + 1) }}
+            {% endfor %}
+        {% endmacro %}
+        {{ toc_nodes(tree, 0) }}
         {% for o in orphans %}
         <div class="toc-cat">{{ o.name }}</div>
         {{ toc_links(o.articles) }}
