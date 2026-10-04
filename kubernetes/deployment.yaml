@@ -99,17 +99,12 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 spec:
   ingressClassName: nginx
+  # sops.gourmiz.fr was here and is gone: the name has never had a DNS record,
+  # so cert-manager's HTTP-01 self-check had nowhere to connect and the
+  # certificate sat pending for months, re-queuing a challenge and a solver
+  # ingress the whole time. Add the host back together with its A record, not
+  # before.
   rules:
-    - host: sops.gourmiz.fr
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: sops-service
-                port:
-                  number: 80
     - host: sops.essenciagua.fr
       http:
         paths:
@@ -131,9 +126,6 @@ spec:
                 port:
                   number: 80
   tls:
-    - hosts:
-        - sops.gourmiz.fr
-      secretName: sops-gourmiz-tls
     - hosts:
         - sops.essenciagua.fr
       secretName: sops-essenciagua-tls
