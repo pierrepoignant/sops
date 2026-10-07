@@ -59,6 +59,36 @@ image, pushes to the OVH registry, syncs `SOPS_SECRETS_JSON` into the
 `sops-secrets` Kubernetes secret, and rolls out `kubernetes/deployment.yaml`
 (Deployment + Service + 3-host Ingress with per-host TLS via cert-manager).
 
+## Google Drive import (Fichiers panels)
+
+The Fichiers panel of a SOP and of a department can pull files straight from
+Google Drive: the browser opens the Google Picker, and the server copies the
+chosen files into the attachment library (S3) like any upload. An import is a
+**copy** — editing the document in Drive afterwards does not change the
+attachment, which is what a controlled document requires. Google-native files
+are exported (Docs/Slides/Drawings → PDF, Sheets → xlsx); Forms and Maps are
+refused. See `help/drive.py`.
+
+The access token lives in the browser only: Google Identity Services issues a
+short-lived `drive.readonly` token, the page POSTs it with the picked file ids,
+the server uses it for those downloads and drops it. No refresh token, no
+stored credential.
+
+Per Google Cloud project (one for Sablésienne, one for Les Bonnes Choses):
+
+1. Enable the **Google Drive API** and the **Google Picker API**.
+2. Create a **browser API key** and restrict it by HTTP referrer to the brand
+   host — it is served in the page as the Picker's developer key.
+3. On the OAuth consent screen, add the
+   `https://www.googleapis.com/auth/drive.readonly` scope. It is a sensitive
+   scope: an *Internal* (Workspace) app needs no review, an *External* one does.
+4. Add the brand host to the OAuth client's **Authorized JavaScript origins**
+   (the token is obtained in the page, so no new redirect URI is needed).
+
+Then set `GOOGLE_DRIVE__API_KEY` (and optionally `GOOGLE_DRIVE__APP_ID`, the
+project *number*). The OAuth client id is the brand's existing sign-in client.
+Until the key is set, the "Depuis Google Drive" button does not appear.
+
 ## S3 migration
 
 Seed media re-uploads itself into `sops-storage` on first boot (idempotent). To

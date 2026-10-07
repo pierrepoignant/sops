@@ -320,6 +320,10 @@
                     </datalist>
                     <button class="btn btn-sm btn-brand"><i class="fas fa-upload"></i> Ajouter</button>
                 </form>
+                {% with drive_endpoint = url_for('help.attachment_drive_import', art_id=art.id),
+                        drive_folders = file_folders %}
+                    {% include "help/_drive_import.html" %}
+                {% endwith %}
                 {% else %}
                 <p class="text-muted mb-0"><i class="fas fa-exclamation-triangle"></i> Le stockage S3 n'est pas configuré — envoi impossible.</p>
                 {% endif %}

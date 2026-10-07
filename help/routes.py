@@ -17,6 +17,7 @@ from help.models import (HelpArticle, HelpCategory, SopDepartment,
                          SopAttachment, SopDeptAttachment, SopVersion, SopRead,
                          SopArticleView, SopSearchLog, SopQuiz,
                          SopQuizQuestion, SopQuizAttempt, SopPendingChange)
+from help import drive
 from help.html_clean import clean_article_html
 from help.search import search as run_search, html_to_text
 from media import storage
@@ -353,9 +354,11 @@ def department(dept_slug):
     dept_file_groups = _group_by_folder(dept.attachments)
     dept_folders = sorted({a.folder for a in dept.attachments if a.folder},
                           key=str.lower)
+    drive_cfg = drive.picker_config(brand)
 
     return render_template('help/department.html', dept=dept, tree=tree,
                            orphans=orphans, departments=_departments(brand),
+                           drive_cfg=drive_cfg,
                            can_manage_quiz=can_manage_quiz,
                            active_quizzes=active_quizzes,
                            admin_quizzes=admin_quizzes,
@@ -420,6 +423,7 @@ def article(slug):
                            can_verify=can_verify,
                            current_vno=current_vno, my_ack=my_ack,
                            ack_current=ack_current,
+                           drive_cfg=drive.picker_config(brand),
                            file_groups=_group_by_folder(art.attachments),
                            file_folders=sorted(
                                {a.folder for a in art.attachments if a.folder},
@@ -1460,6 +1464,77 @@ def attachment_upload(art_id):
     return redirect(url_for('help.article', slug=art.slug) + '#fichiers')
 
 
+def _drive_import(files, token, folder, prefix, scope_id, row_factory):
+    """Copy the picked Drive files into the attachment library.
+
+    Returns (saved, errors): one error message per file that could not be
+    imported, so a bad file in a selection never loses the good ones."""
+    saved, errors = 0, []
+    for item in (files or [])[:drive.MAX_FILES]:
+        file_id = (item or {}).get('id')
+        if not file_id:
+            continue
+        # The Picker already told us the name; use it to label the failures that
+        # happen before the metadata call succeeds (expired token, no access),
+        # which are the ones drive.fetch cannot name itself.
+        label = (item or {}).get('name') or file_id
+        try:
+            name, ctype, data = drive.fetch(file_id, token)
+        except drive.DriveError as e:
+            msg = str(e)
+            errors.append(msg if ' : ' in msg else f'{label} : {msg}')
+            continue
+        except Exception as e:  # network, JSON, anything unexpected
+            errors.append(f'{label} : {e}')
+            continue
+        ext = name.rsplit('.', 1)[-1].lower() if '.' in name else 'bin'
+        key = f'{prefix}{scope_id}/{uuid.uuid4().hex}.{ext}'
+        try:
+            storage.put_object(key, data, ctype)
+        except Exception as e:
+            errors.append(f'{name} : échec du stockage ({e})')
+            continue
+        db.session.add(row_factory(name, ctype, key, len(data), folder))
+        saved += 1
+    db.session.commit()
+    return saved, errors
+
+
+def _drive_payload():
+    """(access_token, files, folder) from the Picker's POST, or None."""
+    data = request.get_json(silent=True) or {}
+    token = (data.get('access_token') or '').strip()
+    files = data.get('files')
+    if not token or not isinstance(files, list) or not files:
+        return None
+    folder = re.sub(r'\s+', ' ', (data.get('folder') or '')).strip()[:160] or None
+    return token, files, folder
+
+
+@help_bp.route('/<int:art_id>/attachments/drive', methods=['POST'])
+@login_required
+@editor_required
+def attachment_drive_import(art_id):
+    """Attach files picked from Google Drive to one SOP."""
+    brand = _brand()
+    art = HelpArticle.query.filter_by(id=art_id, brand=brand).first()
+    if not art:
+        abort(404)
+    _require_edit(art.department)
+    if not storage.is_configured():
+        return jsonify(ok=False, error="Le stockage S3 n'est pas configuré."), 400
+    payload = _drive_payload()
+    if not payload:
+        return jsonify(ok=False, error='Requête invalide.'), 400
+    token, files, folder = payload
+    saved, errors = _drive_import(
+        files, token, folder, ATTACHMENT_PREFIX, art.id,
+        lambda name, ctype, key, size, fold: SopAttachment(
+            article_id=art.id, filename=name, content_type=ctype, s3_key=key,
+            size=size, folder=fold, uploaded_by_id=current_user.id))
+    return jsonify(ok=bool(saved), saved=saved, errors=errors)
+
+
 @help_bp.route('/attachments/<int:att_id>/download')
 @login_required
 def attachment_download(att_id):
@@ -1534,6 +1609,31 @@ def dept_attachment_upload(dept_slug):
     if saved:
         flash(f'{saved} fichier(s) ajouté(s).', 'success')
     return redirect(back)
+
+
+@help_bp.route('/d/<dept_slug>/attachments/drive', methods=['POST'])
+@login_required
+def dept_attachment_drive_import(dept_slug):
+    """Attach files picked from Google Drive to a whole department."""
+    brand = _brand()
+    dept = _get_department(dept_slug, brand)
+    if not dept:
+        abort(404)
+    if not _can_manage_dept_files(current_user, dept):
+        abort(403)
+    if not storage.is_configured():
+        return jsonify(ok=False, error="Le stockage S3 n'est pas configuré."), 400
+    payload = _drive_payload()
+    if not payload:
+        return jsonify(ok=False, error='Requête invalide.'), 400
+    token, files, folder = payload
+    saved, errors = _drive_import(
+        files, token, folder, DEPT_ATTACHMENT_PREFIX, dept.id,
+        lambda name, ctype, key, size, fold: SopDeptAttachment(
+            department_id=dept.id, filename=name, content_type=ctype,
+            s3_key=key, size=size, folder=fold,
+            uploaded_by_id=current_user.id))
+    return jsonify(ok=bool(saved), saved=saved, errors=errors)
 
 
 @help_bp.route('/d/attachments/<int:att_id>/download')

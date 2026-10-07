@@ -1,0 +1,148 @@
+{#
+  "Depuis Google Drive" button for a Fichiers panel.
+
+  Included by the SOP page and the department page; the caller sets:
+      drive_cfg       picker config, or falsy when Drive import is not set up
+      drive_endpoint  URL that receives {access_token, files, folder}
+      drive_folders   existing folder names, for the folder datalist
+
+  The browser holds the OAuth token: Google Identity Services issues a
+  short-lived drive.readonly token, the Picker returns the chosen file ids, and
+  only ids + that token are POSTed. The server fetches the bytes and stores them
+  like any other attachment (see help/drive.py). Nothing is kept client-side.
+#}
+{% if drive_cfg %}
+<div class="drive-import mt-2" id="driveImport"
+     data-endpoint="{{ drive_endpoint }}"
+     data-client-id="{{ drive_cfg.client_id }}"
+     data-api-key="{{ drive_cfg.api_key }}"
+     data-app-id="{{ drive_cfg.app_id }}"
+     data-scope="{{ drive_cfg.scope }}">
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="driveBtn">
+        <i class="fab fa-google-drive"></i> Depuis Google Drive
+    </button>
+    <input type="text" id="driveFolder" list="drive-folders" class="form-control form-control-sm d-inline-block"
+           style="max-width: 220px;" placeholder="Dossier (optionnel)">
+    <datalist id="drive-folders">
+        {% for f in drive_folders %}<option value="{{ f }}">{% endfor %}
+    </datalist>
+    <span id="driveStatus" class="text-muted ms-2" style="font-size: 12.5px;"></span>
+    <div class="form-text" style="font-size: 11.5px;">
+        Les fichiers sont <strong>copiés</strong> dans la bibliothèque : une
+        modification ultérieure dans Drive ne change pas la pièce jointe.
+        Les Docs, Slides et Dessins Google sont convertis en PDF, les Sheets en xlsx.
+    </div>
+</div>
+
+<script>
+(function () {
+    const root = document.getElementById('driveImport');
+    if (!root) return;
+    const btn = document.getElementById('driveBtn');
+    const status = document.getElementById('driveStatus');
+    const cfg = root.dataset;
+    let tokenClient = null, pickerReady = false;
+
+    function say(msg, isError) {
+        status.textContent = msg || '';
+        status.style.color = isError ? '#b3261e' : '';
+    }
+
+    // Load a <script> once, resolving when it has run.
+    const loaded = {};
+    function loadScript(src) {
+        if (loaded[src]) return loaded[src];
+        loaded[src] = new Promise((resolve, reject) => {
+            const el = document.createElement('script');
+            el.src = src; el.async = true;
+            el.onload = resolve;
+            el.onerror = () => reject(new Error(src));
+            document.head.appendChild(el);
+        });
+        return loaded[src];
+    }
+
+    async function ensureApis() {
+        await loadScript('https://accounts.google.com/gsi/client');
+        await loadScript('https://apis.google.com/js/api.js');
+        if (!pickerReady) {
+            await new Promise(resolve => gapi.load('picker', { callback: resolve }));
+            pickerReady = true;
+        }
+        if (!tokenClient) {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: cfg.clientId,
+                scope: cfg.scope,
+                callback: resp => {
+                    if (resp && resp.access_token) openPicker(resp.access_token);
+                    else say('Autorisation Google refusée.', true);
+                },
+            });
+        }
+    }
+
+    function openPicker(token) {
+        say('');
+        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setIncludeFolders(true)
+            .setSelectFolderEnabled(false);
+        const builder = new google.picker.PickerBuilder()
+            .setOAuthToken(token)
+            .setDeveloperKey(cfg.apiKey)
+            .addView(view)
+            .addView(new google.picker.DocsUploadView())
+            .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+            .setCallback(data => {
+                if (data.action === google.picker.Action.PICKED) {
+                    send(token, data.docs || []);
+                }
+            });
+        if (cfg.appId) builder.setAppId(cfg.appId);
+        builder.build().setVisible(true);
+    }
+
+    async function send(token, docs) {
+        if (!docs.length) return;
+        btn.disabled = true;
+        say(`Import de ${docs.length} fichier(s)…`);
+        try {
+            const resp = await fetch(cfg.endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json',
+                           'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({
+                    access_token: token,
+                    folder: document.getElementById('driveFolder').value.trim(),
+                    files: docs.map(d => ({ id: d.id, name: d.name })),
+                }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (data.errors && data.errors.length) {
+                say(data.errors.join(' · '), true);
+            }
+            if (data.saved) {
+                // Reload so the new files appear sorted in the right folder.
+                setTimeout(() => { location.hash = '#fichiers'; location.reload(); },
+                           data.errors && data.errors.length ? 2500 : 300);
+            } else if (!data.errors || !data.errors.length) {
+                say(data.error || 'Aucun fichier importé.', true);
+            }
+        } catch (e) {
+            say('Échec de la connexion au serveur.', true);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    btn.addEventListener('click', async () => {
+        say('Ouverture de Google Drive…');
+        try {
+            await ensureApis();
+            tokenClient.requestAccessToken({ prompt: '' });
+        } catch (e) {
+            say('Impossible de charger Google Drive (réseau ou bloqueur ?).', true);
+        }
+    });
+})();
+</script>
+{% endif %}

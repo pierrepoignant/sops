@@ -46,6 +46,11 @@ ENV_VAR_KEYS = {
     # OVH Object Storage (S3-compatible) — media library
     'ovh': ['endpoint_url', 'bucket', 'region', 'access_key', 'secret_key'],
 
+    # Google Drive import (the Picker in the Fichiers panels). The OAuth client
+    # id is the brand's Sign-in-with-Google one; only the browser API key — the
+    # Picker's "developer key" — and the project number are specific to this.
+    'google-drive': ['api_key', 'app_id'],
+
     # SendGrid (SMTP relay) — email login codes
     'sendgrid': ['api_key', 'from_email', 'from_name'],
 
