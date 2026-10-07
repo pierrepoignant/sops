@@ -34,7 +34,10 @@
     .cat-item.l2 .cat-head { padding: 9px 12px; }
     .cat-name { font-weight: 700; color: var(--brand-primary); font-size: 15px; outline: none;
                 border-radius: 5px; padding: 2px 6px; min-width: 40px; }
-    .cat-item.l2 .cat-name { font-size: 13.5px; color: var(--pim-primary-hover); font-weight: 600; }
+    /* Sub-category names take the brand's companion accent — the gold for
+       Sablésienne — so the three levels read plum / gold / grey at a glance.
+       The -hover variant is the darker one, legible on white. */
+    .cat-item.l2 .cat-name { font-size: 13.5px; color: var(--pim-secondary-hover); font-weight: 600; }
     .cat-name:focus { background: #f7f1ea; box-shadow: 0 0 0 2px #e7d4bd; }
     .cat-count { font-size: 11px; color: #b09a7c; white-space: nowrap; }
     .cat-tools { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
