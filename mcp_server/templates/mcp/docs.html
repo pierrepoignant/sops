@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}MCP · {{ brand_name }}{% endblock %}
+{% block page_title %}Connecter un assistant (MCP){% endblock %}
+{% block page_subtitle %}Comment Claude, Claude Code ou Antigravity lisent le manuel en votre nom{% endblock %}
+{% block content %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body" style="max-width: 860px;">
+    {% if html %}{{ html|safe }}{% else %}<pre style="white-space: pre-wrap;">{{ text }}</pre>{% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -198,6 +198,12 @@ def create_app(db_name='ovh', redis_server='localhost'):
     app.register_blueprint(auth_bp)
     init_oauth(app)
 
+    # The MCP server: its own routes (/mcp, /oauth/*, /.well-known/*) and the
+    # « Connexions IA » screen on the administration blueprint — imported
+    # before that blueprint is registered, so its routes are on it.
+    from mcp_server import mcp_bp
+    app.register_blueprint(mcp_bp)
+
     from administration import administration_bp
     app.register_blueprint(administration_bp)
 

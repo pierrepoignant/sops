@@ -1,0 +1,31 @@
+{% extends 'mcp/_shell.html' %}
+{% block title %}Autoriser {{ client.client_name }} — SOP {{ brand.name }}{% endblock %}
+{% block body %}
+<h5 class="brand-color text-center mb-1">Connecter un assistant au manuel {{ brand.name }}</h5>
+<p class="text-muted text-center mb-3" style="font-size:14px">
+    <strong>{{ client.client_name }}</strong>{% if redirect_host %} <span class="text-muted">({{ redirect_host }})</span>{% endif %}
+    demande à lire les procédures en votre nom.
+</p>
+<div class="who mb-3">
+    Connecté en tant que <strong>{{ current_user.display_name }}</strong><br>
+    <span class="text-muted">{{ current_user.email }}</span>
+</div>
+<p class="mb-1" style="font-size:14px">L'assistant pourra <strong>lire</strong> :</p>
+<ul class="perms mb-3">
+    <li>les départements et le plan du manuel {{ brand.name }}</li>
+    <li>la recherche et le texte des procédures publiées</li>
+</ul>
+<p class="text-muted mb-3" style="font-size:12px">
+    Une seule marque par connexion : celle de cette adresse. Aucune modification n'est possible par ce
+    canal. Chaque consultation est journalisée. Vous pourrez révoquer cet accès à tout moment
+    (Administration › Connexions IA).
+</p>
+<form method="post" action="{{ url_for('mcp.authorize_decision') }}">
+    {% for k, v in params.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    <div class="d-flex gap-2">
+        <button type="submit" name="decision" value="deny" class="btn btn-outline-secondary w-50">Refuser</button>
+        <button type="submit" name="decision" value="approve" class="btn btn-brand w-50">Autoriser</button>
+    </div>
+</form>
+{% endblock %}
