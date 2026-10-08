@@ -61,10 +61,27 @@ def _oauth_redirect(fallback):
     return hub, f"{os.environ.get('OAUTH_HUB_APP_ID', '')}~{secrets.token_urlsafe(16)}"
 
 
+def _safe_next(target):
+    """A path on this site, or nothing: `next` never sends a browser elsewhere."""
+    target = (target or '').strip()
+    if target.startswith('/') and not target.startswith('//') and '\\' not in target:
+        return target
+    return None
+
+
+def _after_login():
+    """Where to go once logged in: the page that asked for it (an MCP consent
+    screen, say), or the home page."""
+    return redirect(session.pop('login_next', None) or url_for('home'))
+
+
 @auth_bp.route('/login')
 def login():
+    nxt = _safe_next(request.args.get('next'))
+    if nxt:
+        session['login_next'] = nxt
     if current_user.is_authenticated:
-        return redirect(url_for('home'))
+        return _after_login()
     return render_template('auth/login.html')
 
 
@@ -150,7 +167,7 @@ def google_callback():
     user.last_login = datetime.utcnow()
     db.session.commit()
     login_user(user)
-    return redirect(url_for('home'))
+    return _after_login()
 
 
 # --- Email code login (for accounts not on the Google OAuth domain) ---
@@ -230,7 +247,7 @@ def login_email_verify():
     user.last_login = datetime.utcnow()
     db.session.commit()
     login_user(user)
-    return redirect(url_for('home'))
+    return _after_login()
 
 
 @auth_bp.route('/profile', methods=['GET', 'POST'])

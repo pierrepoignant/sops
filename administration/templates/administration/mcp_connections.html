@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Connexions IA · {{ brand_name }}{% endblock %}
+{% block page_title %}Connexions IA (MCP){% endblock %}
+{% block page_subtitle %}Assistants (Claude, Claude Code, Antigravity…) autorisés par les utilisateurs à lire le manuel en leur nom — <a href="{{ url_for('mcp.docs') }}">comment se connecter</a>{% endblock %}
+
+{% block head %}
+<style>
+    .key-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: #6c757d;
+                    font-weight: 600; background: #fafafa; }
+    .key-table td { font-size: 13px; vertical-align: middle; }
+    .status-badge { border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
+    .status-badge.active { background: #e6f4ea; color: #1e7b3c; }
+    .status-badge.revoked { background: #fdecef; color: #b02a37; }
+    tr.revoked { opacity: 0.55; }
+    .args { font-family: monospace; font-size: 11px; color: #555; max-width: 420px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white fw-semibold">Connexions</div>
+    <div class="card-body p-0">
+        <table class="table key-table align-middle mb-0">
+            <thead>
+                <tr><th>Utilisateur</th><th>Client</th><th>Marque</th><th>Statut</th><th>Appels</th><th>Dernier appel</th><th>Autorisée le</th><th>Expire le</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for t in tokens %}
+                <tr class="{{ 'revoked' if t.revoked_at }}">
+                    <td class="fw-semibold">{{ t.user.display_name if t.user else '?' }}<br><span class="small text-muted fw-normal">{{ t.user.email if t.user else '' }}</span></td>
+                    <td>{{ t.client.client_name if t.client else t.client_id }}</td>
+                    <td>{{ t.brand }}</td>
+                    <td><span class="status-badge {{ 'revoked' if t.revoked_at else 'active' }}">{{ 'Révoquée' if t.revoked_at else 'Active' }}</span></td>
+                    <td>{{ counts.get(t.id, 0) }}</td>
+                    <td class="small text-muted">{% if t.last_used_at %}{{ t.last_used_at.strftime('%d/%m/%Y %H:%M') }} UTC{% else %}<span class="fst-italic">jamais</span>{% endif %}</td>
+                    <td class="small text-muted">{{ t.created_at.strftime('%d/%m/%Y %H:%M') }} UTC</td>
+                    <td class="small text-muted">{{ t.refresh_expires_at.strftime('%d/%m/%Y') if t.refresh_expires_at else '' }}</td>
+                    <td class="text-end">
+                        {% if not t.revoked_at %}
+                        <form method="POST" action="{{ url_for('administration.mcp_connection_revoke', token_id=t.id) }}"
+                              onsubmit="return confirm('Révoquer cette connexion ? L\'assistant devra être ré-autorisé.');" style="display:inline;">
+                            <button type="submit" class="btn btn-sm btn-link text-danger" title="Révoquer"><i class="fas fa-ban"></i></button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="9" class="text-center text-muted py-4">Aucun assistant connecté.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-semibold">50 derniers appels</div>
+    <div class="card-body p-0">
+        <table class="table key-table align-middle mb-0">
+            <thead><tr><th>Quand</th><th>Utilisateur</th><th>Marque</th><th>Outil</th><th>Arguments</th><th>Durée</th><th>Résultat</th></tr></thead>
+            <tbody>
+                {% for c in recent %}
+                <tr>
+                    <td class="small text-muted">{{ c.created_at.strftime('%d/%m %H:%M:%S') }}</td>
+                    <td>{{ c.user.display_name if c.user else '?' }}</td>
+                    <td>{{ c.brand }}</td>
+                    <td class="fw-semibold">{{ c.tool }}</td>
+                    <td><span class="args" title="{{ c.arguments }}">{{ c.arguments }}</span></td>
+                    <td class="small text-muted">{{ c.duration_ms }} ms</td>
+                    <td>{% if c.ok %}<span class="text-success">ok</span>{% else %}<span class="text-danger" title="{{ c.error }}">erreur</span>{% endif %}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-center text-muted py-4">Aucun appel.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
