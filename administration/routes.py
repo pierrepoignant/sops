@@ -52,6 +52,7 @@ def admin_users_data():
             'role': u.role,
             'department': u.department or '',
             'is_admin': u.is_admin,
+            'is_active': bool(u.is_active),
             'created_at': u.created_at.strftime('%d/%m/%Y %H:%M') if u.created_at else '-',
             'last_login': u.last_login.strftime('%d/%m/%Y %H:%M') if u.last_login else '-',
             'oauth_provider': u.oauth_provider or '-',
@@ -151,30 +152,35 @@ def admin_set_department(user_id):
     return jsonify(ok=True, department=user.department or '')
 
 
-@administration_bp.route('/users/sync-cadence', methods=['POST'])
+@administration_bp.route('/users/sync-datasab', methods=['POST'])
 @login_required
 @admin_required
-def sync_cadence():
-    """Import/refresh users from the Cadence employee directory. Teams map to
-    departments (stores -> Boutiques, operations -> Opérations)."""
+def sync_datasab():
+    """Import/refresh users from DataSab, the user directory. Accounts that have
+    left DataSab are deactivated, except the lesbonneschoses.io domain, the
+    admins and whoever runs the sync (see administration/datasab_sync.py)."""
     from flask import g
-    from administration import cadence_sync
+    from administration import datasab_sync
     brand = getattr(g, 'brand', None) or 'sablesienne'
     try:
-        stats = cadence_sync.sync_users(brand)
-    except cadence_sync.CadenceSyncError as e:
+        stats = datasab_sync.sync_users(brand, actor_id=current_user.id)
+    except datasab_sync.DatasabSyncError as e:
         flash(str(e), 'danger')
         return redirect(url_for('administration.admin_users'))
-    msg = (f"Synchronisation Cadence : {stats['created']} créé(s), "
+    msg = (f"Synchronisation DataSab : {stats['created']} créé(s), "
            f"{stats['updated']} mis à jour, {stats['unchanged']} inchangé(s)")
     extras = []
+    if stats['reactivated']:
+        extras.append(f"{stats['reactivated']} réactivé(s)")
+    if stats['deactivated']:
+        extras.append(f"{stats['deactivated']} désactivé(s)")
+    if stats['protected']:
+        extras.append(f"{stats['protected']} conservé(s) hors DataSab "
+                      '(lesbonneschoses.io, administrateurs)')
     if stats['no_email']:
         extras.append(f"{stats['no_email']} sans e-mail ignorés")
     if stats['duplicates']:
         extras.append(f"{stats['duplicates']} doublons d'e-mail ignorés")
-    if stats['created_departments']:
-        extras.append('départements créés : '
-                      + ', '.join(stats['created_departments']))
     if extras:
         msg += ' (' + ' · '.join(extras) + ')'
     flash(msg + '.', 'success')

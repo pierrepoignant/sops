@@ -34,7 +34,8 @@ brand → department → category L1 → category L2 [→ category L3] → SOP
 - `auth` — Google OAuth per brand + passwordless email-code fallback.
 - `help` — the SOP center (reader + admin management, `/help`).
 - `media` — S3-backed media library (OVH Object Storage, bucket `sops-storage`).
-- `administration` — users, groups, module access, visit analytics.
+- `administration` — users, groups, module access, visit analytics, brand
+  configuration, and the DataSab user sync.
 
 SOPs are readable by every authenticated user; `media` and `administration` are
 gated by group module access (admins bypass).
@@ -58,6 +59,27 @@ Push to `main` → GitHub Actions (`.github/workflows/deploy.yml`) builds the
 image, pushes to the OVH registry, syncs `SOPS_SECRETS_JSON` into the
 `sops-secrets` Kubernetes secret, and rolls out `kubernetes/deployment.yaml`
 (Deployment + Service + 3-host Ingress with per-host TLS via cert-manager).
+
+## User sync (DataSab)
+
+*Utilisateurs* has a **Synchroniser depuis DataSab** button.
+`administration/datasab_sync.py` reads the `users` table of DataSab
+(data.sablesienne.com) directly, read-only, over a second MySQL connection —
+DataSab's own `/administration/users` API needs a Google session, so it cannot
+be called server-to-server. The table is introspected: only `email` is
+required.
+
+Accounts that have left DataSab are **deactivated, never deleted** — deleting
+would take their reading acknowledgements, quiz attempts and the versions they
+verified with them. `users.is_active` gates sign-in (both the Google and the
+email-code path). Never deactivated: the `lesbonneschoses.io` domain, the
+admins, and whoever runs the sync.
+
+A DataSab department is matched against an existing SOP department by slug or
+name; an unknown one is left unset rather than creating a department.
+
+Config: `DATABASE_DATASAB__HOST / __USER / __PASSWORD / __NAME / __PORT`.
+This replaces the former Cadence sync, whose `CADENCE__*` keys can be dropped.
 
 ## Google Drive import (Fichiers panels)
 

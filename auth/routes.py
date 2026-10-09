@@ -164,6 +164,10 @@ def google_callback():
         if not user.last_name and user_info.get('family_name'):
             user.last_name = user_info.get('family_name')
 
+    if not user.is_active:
+        db.session.commit()
+        flash('Ce compte est désactivé. Contactez un administrateur.', 'error')
+        return redirect(url_for('auth.login'))
     user.last_login = datetime.utcnow()
     db.session.commit()
     login_user(user)
@@ -244,6 +248,10 @@ def login_email_verify():
         db.session.commit()
         flash('Compte introuvable.', 'error')
         return redirect(url_for('auth.login_email_request'))
+    if not user.is_active:
+        db.session.commit()
+        flash('Ce compte est désactivé. Contactez un administrateur.', 'error')
+        return redirect(url_for('auth.login'))
     user.last_login = datetime.utcnow()
     db.session.commit()
     login_user(user)

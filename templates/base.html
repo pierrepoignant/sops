@@ -355,8 +355,13 @@
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         {% for category, message in messages %}
+                            {# 'danger' is used by five flash() calls in the
+                               app and was falling through to the grey
+                               'secondary' style, so failures did not look like
+                               failures. #}
                             {% set alert_class = {
                                 'success': 'success', 'error': 'danger',
+                                'danger': 'danger',
                                 'warning': 'warning', 'info': 'info'
                             }.get(category, 'secondary') %}
                             <div class="alert alert-{{ alert_class }} alert-dismissible fade show" role="alert">

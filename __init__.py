@@ -54,6 +54,7 @@ def _upgrade_schema():
         },
         'users': {
             'department': 'VARCHAR(80)',
+            'is_active': 'BOOLEAN NOT NULL DEFAULT 1',
         },
         'sop_versions': {
             'verified_at': 'DATETIME',

@@ -75,6 +75,10 @@ def _authenticate():
         return None, 'Token invalide, expiré ou révoqué.'
     if not row.user:
         return None, 'Utilisateur introuvable.'
+    if not row.user.is_active:
+        # Deactivated by the DataSab sync: the token outlives the account
+        # (90 days of refresh), so it has to be refused here too.
+        return None, 'Compte désactivé.'
     return row, None
 
 

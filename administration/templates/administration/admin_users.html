@@ -4,11 +4,11 @@
 {% block page_title %}Utilisateurs{% endblock %}
 
 {% block page_buttons %}
-<form method="post" action="{{ url_for('administration.sync_cadence') }}" class="d-inline"
+<form method="post" action="{{ url_for('administration.sync_datasab') }}" class="d-inline"
       onsubmit="const b = this.querySelector('button'); b.disabled = true; b.innerHTML = 'Synchronisation…';">
     <button type="submit" class="btn btn-sm btn-outline-secondary"
-            title="Importe les employés actifs de Cadence — équipe Boutiques → département Boutiques, Opérations → Opérations">
-        <i class="fas fa-sync-alt"></i> Synchroniser depuis Cadence
+            title="Importe les utilisateurs de DataSab. Les comptes absents de DataSab sont désactivés, sauf le domaine lesbonneschoses.io et les administrateurs.">
+        <i class="fas fa-sync-alt"></i> Synchroniser depuis DataSab
     </button>
 </form>
 <button type="button" class="btn btn-sm btn-brand" onclick="openCreateUserModal()">
@@ -209,7 +209,9 @@ function loadUsers() {
                        ${DEPARTMENTS.map(d => `<option value="${d.slug}" ${u.department===d.slug?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
                    </select>`;
             const pending = u.last_login === '-';
-            const statusChip = pending
+            const statusChip = u.is_active === false
+                ? '<span class="status-chip pending" title="Absent de DataSab — connexion refusée">Désactivé</span>'
+                : pending
                 ? '<span class="status-chip pending">En attente</span>'
                 : '<span class="status-chip active">Actif</span>';
             const deleteBtn = isSelf

@@ -28,6 +28,12 @@ class User(UserMixin, db.Model):
     oauth_id = db.Column(db.String(200))
     first_name = db.Column(db.String(100))
     last_name = db.Column(db.String(100))
+    # Deactivated accounts keep their history — reading acknowledgements, quiz
+    # attempts, the versions they verified — but can no longer sign in. Set by
+    # the DataSab sync when someone leaves the directory; overrides UserMixin's
+    # always-True is_active, which Flask-Login checks on login_user(). Column
+    # added post-launch — see _upgrade_schema().
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
 
     @property
     def is_admin(self):

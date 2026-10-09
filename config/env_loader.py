@@ -57,6 +57,7 @@ ENV_VAR_KEYS = {
     # Anthropic Claude API — AI-generated training quizzes
     'anthropic': ['api_key'],
 
-    # Cadence (staff planning app) — employee directory sync
-    'cadence': ['api_key', 'api_url'],
+    # DataSab (data.sablesienne.com) — user directory sync. Its users table is
+    # read directly, read-only: DataSab's own users API needs a Google session.
+    'database-datasab': ['host', 'user', 'password', 'name', 'port'],
 }
