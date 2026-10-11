@@ -39,32 +39,31 @@ def _drop_legacy_tables():
 def _backfill_user_brands(app):
     """Attach every pre-existing account to a brand, once.
 
-    Runs only while user_brands is empty, so later changes made in the admin are
-    never overwritten. The email domain decides where it can: holding-company
-    staff (lesbonneschoses.io) get every brand, a brand domain gets its brand,
-    and a personal address gets Sablésienne — every one of those accounts comes
-    from the Sablésienne directory (shop and production staff without a company
-    mailbox)."""
+    Runs only while user_brands is empty, so changes later made in the admin are
+    never overwritten. A domain gets the brands that already let it sign in
+    (brands.py `allowed_domains`), which keeps this consistent with the login
+    gate instead of inventing a second rule. An address on none of those lists —
+    gmail, orange, laposte… — gets Sablésienne: every such account comes from the
+    Sablésienne directory, where most shop and production staff have no company
+    mailbox.
+
+    It is deliberately not generous: an earlier version gave every
+    lesbonneschoses.io account all three brands, which dropped Essenciagua
+    mailboxes into the Sablésienne user list. Where the domain is shared the
+    right answer is per person, and that is the admin's call, not a rule's."""
     from auth.models import User, UserBrand
     from brands import BRANDS
 
     if UserBrand.query.first() is not None:
         return 0
-    domain_brand = {}
+    domain_brands = {}
     for bid, b in BRANDS.items():
         for d in b['allowed_domains']:
-            if d != 'lesbonneschoses.io':
-                domain_brand[d] = bid
+            domain_brands.setdefault(d.lower(), []).append(bid)
     attached = 0
     for user in User.query.all():
         domain = (user.email or '').rsplit('@', 1)[-1].lower()
-        if domain == 'lesbonneschoses.io':
-            ids = list(BRANDS)
-        elif domain in domain_brand:
-            ids = [domain_brand[domain]]
-        else:
-            ids = ['sablesienne']
-        for bid in ids:
+        for bid in domain_brands.get(domain, ['sablesienne']):
             db.session.add(UserBrand(user_id=user.id, brand=bid))
         attached += 1
     if attached:

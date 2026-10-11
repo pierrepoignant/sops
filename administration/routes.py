@@ -42,19 +42,27 @@ def admin_users():
 @login_required
 @admin_required
 def admin_users_data():
-    """Users of the active brand only — the platform serves several brands and
-    their staff must not see each other. Accounts with no brand yet are listed
-    too, so they cannot become invisible and unmanageable."""
+    """Users of one brand — the platform serves several and their staff must not
+    see each other. Defaults to the brand of the host being used; ?brand=<id>
+    picks another and ?brand=all lifts the filter. Accounts attached to no brand
+    are always listed, so they cannot become invisible and unmanageable."""
     from flask import g
     from auth.models import UserBrand
+    from brands import BRANDS
+    asked = (request.args.get('brand') or '').strip()
     brand = getattr(g, 'brand', None) or 'sablesienne'
-    attached = db.session.query(UserBrand.user_id).filter(
-        UserBrand.brand == brand).subquery()
-    orphans = db.session.query(UserBrand.user_id).subquery()
-    users = User.query.filter(
-        db.or_(User.id.in_(db.select(attached)),
-               ~User.id.in_(db.select(orphans)))
-    ).order_by(
+    if asked == 'all':
+        brand = None
+    elif asked in BRANDS:
+        brand = asked
+
+    users = User.query
+    if brand:
+        attached = db.select(UserBrand.user_id).where(UserBrand.brand == brand)
+        any_brand = db.select(UserBrand.user_id)
+        users = users.filter(db.or_(User.id.in_(attached),
+                                    ~User.id.in_(any_brand)))
+    users = users.order_by(
         case((User.last_login.is_(None), 1), else_=0),
         User.last_login.desc(),
     ).all()

@@ -11,6 +11,14 @@
         <i class="fas fa-sync-alt"></i> Synchroniser depuis DataSab
     </button>
 </form>
+<select id="brandFilter" class="form-select form-select-sm d-inline-block align-middle"
+        style="width: auto;" onchange="loadUsers()"
+        title="Marque dont les utilisateurs sont affichés">
+    {% for b in all_brands %}
+    <option value="{{ b.id }}" {% if b.id == current_brand %}selected{% endif %}>{{ b.name }}</option>
+    {% endfor %}
+    <option value="all">Toutes les marques</option>
+</select>
 <button type="button" class="btn btn-sm btn-brand" onclick="openCreateUserModal()">
     <i class="fas fa-user-plus"></i> Ajouter un utilisateur
 </button>
@@ -186,8 +194,9 @@ async function setBrands(userId, inputEl) {
     }
     cell.querySelectorAll('label.brand-chip').forEach(l =>
         l.classList.toggle('on', l.querySelector('input').checked));
-    // Dropping the brand being administered takes the row off this list.
-    if (!data.brands.includes(CURRENT_BRAND)) loadUsers();
+    // Dropping the brand currently displayed takes the row off this list.
+    const shown = document.getElementById('brandFilter').value;
+    if (shown !== 'all' && !data.brands.includes(shown)) loadUsers();
 }
 const CURRENT_USER_ID = {{ current_user.id }};
 const DEPARTMENTS = [
@@ -238,7 +247,9 @@ function escapeHtml(s) {
 }
 
 function loadUsers() {
-    fetch(API_DATA).then(r => r.json()).then(data => {
+    const filter = document.getElementById('brandFilter');
+    const url = API_DATA + '?brand=' + encodeURIComponent(filter ? filter.value : '');
+    fetch(url).then(r => r.json()).then(data => {
         const body = document.getElementById('usersBody');
         if (!data.users || !data.users.length) {
             body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Aucun utilisateur.</td></tr>';
