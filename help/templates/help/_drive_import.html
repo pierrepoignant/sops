@@ -31,6 +31,8 @@
         Les fichiers sont <strong>copiés</strong> dans la bibliothèque : une
         modification ultérieure dans Drive ne change pas la pièce jointe.
         Les Docs, Slides et Dessins Google sont convertis en PDF, les Sheets en xlsx.
+        Les Drive partagés de la marque sont accessibles, dans la limite de vos
+        propres droits Google.
     </div>
 </div>
 
@@ -83,13 +85,23 @@
 
     function openPicker(token) {
         say('');
-        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+        // setEnableDrives: without it the Picker only offers "Mon Drive", which
+        // leaves out the brand's shared drives — where the document base
+        // actually lives. The server side already passes supportsAllDrives.
+        const myDrive = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setEnableDrives(true)
             .setIncludeFolders(true)
             .setSelectFolderEnabled(false);
+        const sharedDrives = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setEnableDrives(true)
+            .setIncludeFolders(true)
+            .setSelectFolderEnabled(false)
+            .setOwnedByMe(false);
         const builder = new google.picker.PickerBuilder()
             .setOAuthToken(token)
             .setDeveloperKey(cfg.apiKey)
-            .addView(view)
+            .addView(myDrive)
+            .addView(sharedDrives)
             .addView(new google.picker.DocsUploadView())
             .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
             .setCallback(data => {
