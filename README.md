@@ -133,9 +133,21 @@ Per Google Cloud project (one for Sablésienne, one for Les Bonnes Choses):
 4. Add the brand host to the OAuth client's **Authorized JavaScript origins**
    (the token is obtained in the page, so no new redirect URI is needed).
 
-Then set `GOOGLE_DRIVE__API_KEY` (and optionally `GOOGLE_DRIVE__APP_ID`, the
-project *number*). The OAuth client id is the brand's existing sign-in client.
-Until the key is set, the "Depuis Google Drive" button does not appear.
+Then set, **per brand**:
+
+    SABLESIENNE_GOOGLEDRIVE_API_KEY   the browser API key
+    SABLESIENNE_GOOGLEDRIVE_APP_ID    the project number (optional)
+
+Brand-first and not one global key: a Picker developer key only works with an
+OAuth client from the same Google Cloud project, and each brand has its own
+client. Essenciagua therefore needs `ESSENCIAGUA_GOOGLEDRIVE_*` from the Les
+Bonnes Choses project. The OAuth client id itself is the brand's existing
+sign-in client. Until a brand's key is set, its "Depuis Google Drive" button
+does not appear — the feature is off, not broken.
+
+These two keys do not follow the `SECTION__KEY` convention and are read straight
+from the environment by `help/drive.py`, so they are not registered in
+`config/env_loader.py`.
 
 ## S3 migration
 

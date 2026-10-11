@@ -13,13 +13,25 @@ An import is a *copy*, taken at that moment: editing the document in Drive
 afterwards does not change the attachment. That is deliberate on a quality
 platform, where an approved SOP must not have its annexes mutate underneath it.
 
-Configuration (per deployment, section ``google-drive``):
-    api_key   browser API key, restricted to the brand hosts — the Picker's
-              "developer key"
-    app_id    the Google Cloud project *number* (optional; lets the Picker show
-              files the app itself created)
-The OAuth client id is the brand's existing Sign-in-with-Google client.
+Configuration is per brand, read from the environment as
+``<BRAND>_GOOGLEDRIVE_API_KEY`` and ``<BRAND>_GOOGLEDRIVE_APP_ID``:
+
+    SABLESIENNE_GOOGLEDRIVE_API_KEY   browser API key, restricted to the brand's
+                                      host — the Picker's "developer key"
+    SABLESIENNE_GOOGLEDRIVE_APP_ID    the Google Cloud project *number*
+                                      (optional; lets the Picker show files the
+                                      app itself created)
+
+Per brand and not global, because a Picker developer key only works together
+with an OAuth client from the same Google Cloud project, and each brand has its
+own client (brands.py PROVIDERS). The OAuth client id itself is the brand's
+existing Sign-in-with-Google one — nothing new to create.
+
+The names are brand-first to match the deployment's secret store; they reach the
+pod through SOPS_SECRETS_JSON, and local development through .env.
 """
+import os
+
 import requests
 from flask import current_app
 
@@ -49,23 +61,25 @@ class DriveError(Exception):
     so it names the file and says what went wrong."""
 
 
-def _config():
-    return current_app.config.get('google-drive', {}) or {}
+def _setting(brand, key):
+    """<BRAND>_GOOGLEDRIVE_<KEY> from the environment, or None."""
+    name = f"{(brand or '').upper().replace('-', '_')}_GOOGLEDRIVE_{key.upper()}"
+    value = os.environ.get(name)
+    return value.strip() if value else None
 
 
 def picker_config(brand):
     """What the page needs to open the Picker, or None when Drive import is not
-    configured for this deployment/brand."""
-    from brands import provider_for_brand
-    from brands import PROVIDERS
-    cfg = _config()
-    api_key = cfg.get('api_key')
+    configured for this brand — in which case the button simply does not
+    appear, rather than failing on click."""
+    from brands import PROVIDERS, provider_for_brand
+    api_key = _setting(brand, 'api_key')
     oauth = current_app.config.get(PROVIDERS.get(provider_for_brand(brand)), {}) or {}
     client_id = oauth.get('client_id')
     if not (api_key and client_id):
         return None
     return {'api_key': api_key, 'client_id': client_id,
-            'app_id': cfg.get('app_id') or '', 'scope': SCOPE}
+            'app_id': _setting(brand, 'app_id') or '', 'scope': SCOPE}
 
 
 def _get(path, token, params=None, stream=False):
