@@ -9,6 +9,25 @@ from datetime import datetime
 ROLES = ('admin', 'staff')
 
 
+class UserBrand(db.Model):
+    """Which brands a user belongs to — the platform serves several, and a
+    person may work for one of them (shop and production staff) or for all of
+    them (holding-company staff). Brands are a registry in brands.py, not a
+    table, so the brand id is stored as a plain string.
+
+    Scoping lives here rather than on an email domain: 41 of the 79 accounts are
+    on gmail, orange, laposte… because most shop and production staff have no
+    company mailbox, so the domain says nothing about the brand."""
+    __tablename__ = 'user_brands'
+
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'),
+                        primary_key=True)
+    brand = db.Column(db.String(40), primary_key=True, index=True)
+
+    user = db.relationship('User', backref=db.backref(
+        'brand_links', cascade='all, delete-orphan', lazy='selectin'))
+
+
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
 
@@ -38,6 +57,21 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == 'admin'
+
+    @property
+    def brands(self):
+        """Brand ids this user may use, sorted."""
+        return sorted(link.brand for link in self.brand_links)
+
+    def has_brand(self, brand):
+        return any(link.brand == brand for link in self.brand_links)
+
+    def set_brands(self, brand_ids):
+        """Replace the user's brands with ``brand_ids`` (unknown ids ignored)."""
+        from brands import BRANDS
+        wanted = {b for b in brand_ids if b in BRANDS}
+        self.brand_links = [UserBrand(user_id=self.id, brand=b)
+                            for b in sorted(wanted)]
 
     @property
     def display_name(self):

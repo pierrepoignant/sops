@@ -42,6 +42,21 @@ def _default_group():
     return grp
 
 
+def _brand_allowed(user):
+    """True when the account belongs to the brand of the host being used.
+    An account with no brand at all is let through: that means the backfill has
+    not reached it, and locking someone out over missing data would be worse
+    than letting them in."""
+    from brands import get_brand
+    brand = _brand()
+    if not user.brand_links or user.has_brand(brand):
+        return True
+    db.session.commit()
+    flash(f"Ce compte n'a pas accès à {get_brand(brand)['name']}. "
+          'Contactez un administrateur.', 'error')
+    return False
+
+
 def _oauth_redirect(fallback):
     """Where Google should send the authorization code back to.
 
@@ -152,6 +167,8 @@ def google_callback():
             last_name=user_info.get('family_name'),
         )
         db.session.add(user)
+        db.session.flush()
+        user.set_brands([_brand()])
         if not is_first:
             user.groups.append(_default_group())
     else:
@@ -167,6 +184,8 @@ def google_callback():
     if not user.is_active:
         db.session.commit()
         flash('Ce compte est désactivé. Contactez un administrateur.', 'error')
+        return redirect(url_for('auth.login'))
+    if not _brand_allowed(user):
         return redirect(url_for('auth.login'))
     user.last_login = datetime.utcnow()
     db.session.commit()
@@ -251,6 +270,8 @@ def login_email_verify():
     if not user.is_active:
         db.session.commit()
         flash('Ce compte est désactivé. Contactez un administrateur.', 'error')
+        return redirect(url_for('auth.login'))
+    if not _brand_allowed(user):
         return redirect(url_for('auth.login'))
     user.last_login = datetime.utcnow()
     db.session.commit()

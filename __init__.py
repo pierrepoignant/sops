@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, jsonify, g, request
+from flask import Flask, render_template, redirect, url_for, jsonify, g, request, flash
 from flask_login import LoginManager, current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.routing import BuildError
@@ -34,6 +34,43 @@ def _drop_legacy_tables():
     if 'sop_editors' in tables:
         db.session.execute(text('DROP TABLE sop_editors'))
         db.session.commit()
+
+
+def _backfill_user_brands(app):
+    """Attach every pre-existing account to a brand, once.
+
+    Runs only while user_brands is empty, so later changes made in the admin are
+    never overwritten. The email domain decides where it can: holding-company
+    staff (lesbonneschoses.io) get every brand, a brand domain gets its brand,
+    and a personal address gets Sablésienne — every one of those accounts comes
+    from the Sablésienne directory (shop and production staff without a company
+    mailbox)."""
+    from auth.models import User, UserBrand
+    from brands import BRANDS
+
+    if UserBrand.query.first() is not None:
+        return 0
+    domain_brand = {}
+    for bid, b in BRANDS.items():
+        for d in b['allowed_domains']:
+            if d != 'lesbonneschoses.io':
+                domain_brand[d] = bid
+    attached = 0
+    for user in User.query.all():
+        domain = (user.email or '').rsplit('@', 1)[-1].lower()
+        if domain == 'lesbonneschoses.io':
+            ids = list(BRANDS)
+        elif domain in domain_brand:
+            ids = [domain_brand[domain]]
+        else:
+            ids = ['sablesienne']
+        for bid in ids:
+            db.session.add(UserBrand(user_id=user.id, brand=bid))
+        attached += 1
+    if attached:
+        db.session.commit()
+        app.logger.info(f'Brand backfill: {attached} user(s) attached.')
+    return attached
 
 
 def _upgrade_schema():
@@ -217,6 +254,31 @@ def create_app(db_name='ovh', redis_server='localhost'):
     # --- Module access enforcement + template helpers ---
     from administration.permissions import (enforce_module_access,
                                             user_has_module_access, user_modules)
+
+    @app.before_request
+    def enforce_brand_access():
+        """A session opened on one brand's host must not carry over to another
+        brand's host. Login already checks this, but a user can switch host with
+        a live cookie, so it is re-checked on every request.
+
+        Left alone: the auth blueprint (otherwise logging out is impossible),
+        /mcp (bearer tokens carry their own brand and are host-checked there),
+        the health probe and static files."""
+        if not current_user.is_authenticated:
+            return None
+        if request.blueprint in ('auth', 'static', 'mcp') or \
+                request.endpoint in (None, 'health_check'):
+            return None
+        if not current_user.brand_links or \
+                current_user.has_brand(getattr(g, 'brand', None)):
+            return None
+        from flask_login import logout_user
+        from brands import get_brand
+        logout_user()
+        flash(f"Ce compte n'a pas accès à "
+              f"{get_brand(getattr(g, 'brand', None))['name']}.", 'error')
+        return redirect(url_for('auth.login'))
+
     app.before_request(enforce_module_access)
 
     @app.context_processor
@@ -272,6 +334,7 @@ def create_app(db_name='ovh', redis_server='localhost'):
         _drop_legacy_tables()
         db.create_all()
         _upgrade_schema()
+        _backfill_user_brands(app)
 
     # Idempotent one-time seeding of the media library + SOP center.
     from help.seed import run_seed

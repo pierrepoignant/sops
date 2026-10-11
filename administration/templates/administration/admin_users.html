@@ -42,6 +42,13 @@
     .btn-brand:hover { background-color: var(--pim-primary-hover); border-color: var(--pim-primary-hover); color: white; }
     .form-label-sm { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
                       color: #6c757d; margin-bottom: 6px; display: block; }
+    .brand-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+                  font-size: 11px; padding: 2px 8px; margin: 1px 2px 1px 0;
+                  border: 1px solid var(--pim-border); border-radius: 999px;
+                  color: var(--pim-text-muted); background: white; white-space: nowrap; }
+    .brand-chip.on { border-color: var(--pim-primary); color: var(--pim-primary);
+                     background: rgba(var(--pim-primary-rgb), 0.08); font-weight: 600; }
+    .brand-chip input { margin: 0; }
     .btn-icon { background: none; border: none; color: #adb5bd; cursor: pointer; padding: 4px 6px; }
     .btn-icon:hover { color: #dc3545; }
 </style>
@@ -58,6 +65,7 @@
                         <th>Email</th>
                         <th style="width: 130px;">Rôle</th>
                         <th style="width: 170px;">Département</th>
+                        <th style="width: 180px;">Marques</th>
                         <th>Statut</th>
                         <th>Dernière connexion</th>
                         <th>Créé le</th>
@@ -65,7 +73,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="8" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> Chargement...</td></tr>
+                    <tr><td colspan="9" class="text-center py-4"><i class="fas fa-spinner fa-spin"></i> Chargement...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -125,6 +133,22 @@
                         Le département ci-dessus est le département d'appartenance
                         (lecteurs attendus, quiz, notifications).
                     </div>
+                    <div class="mt-3">
+                        <label class="form-label-sm">Marques *</label>
+                        <div>
+                            {% for b in all_brands %}
+                            <label class="brand-chip {% if b.id == current_brand %}on{% endif %}">
+                                <input type="checkbox" name="brands" value="{{ b.id }}"
+                                       {% if b.id == current_brand %}checked{% endif %}
+                                       onchange="this.closest('label').classList.toggle('on', this.checked)">
+                                {{ b.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <div class="form-text" style="font-size: 11px;">
+                            Les marques sur lesquelles ce compte pourra se connecter.
+                        </div>
+                    </div>
                     <div id="createUserError" class="alert alert-danger py-2 px-3 mt-3 mb-0" style="display:none; font-size:13px;"></div>
                 </div>
                 <div class="modal-footer">
@@ -142,6 +166,29 @@
 {% block scripts %}
 <script>
 const API_DATA = "{{ url_for('administration.admin_users_data') }}";
+const ALL_BRANDS = {{ all_brands | tojson }};
+const CURRENT_BRAND = "{{ current_brand }}";
+
+async function setBrands(userId, inputEl) {
+    const cell = inputEl.closest('td');
+    const brands = [...cell.querySelectorAll('input[type=checkbox]')]
+        .filter(cb => cb.checked).map(cb => cb.value);
+    const resp = await fetch(`/administration/users/${userId}/set-brands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brands }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+        inputEl.checked = !inputEl.checked;   // put the toggle back
+        alert(data.error || 'Erreur');
+        return;
+    }
+    cell.querySelectorAll('label.brand-chip').forEach(l =>
+        l.classList.toggle('on', l.querySelector('input').checked));
+    // Dropping the brand being administered takes the row off this list.
+    if (!data.brands.includes(CURRENT_BRAND)) loadUsers();
+}
 const CURRENT_USER_ID = {{ current_user.id }};
 const DEPARTMENTS = [
     {% for d in departments %}{ slug: {{ d.slug | tojson }}, name: {{ d.name | tojson }} },{% endfor %}
@@ -166,6 +213,7 @@ createUserForm.addEventListener('submit', async (e) => {
         last_name: fd.get('last_name'),
         role: fd.get('role'),
         department: fd.get('department'),
+        brands: fd.getAll('brands'),
     };
     const errBox = document.getElementById('createUserError');
     errBox.style.display = 'none';
@@ -208,6 +256,13 @@ function loadUsers() {
                        <option value="" ${!u.department?'selected':''}>—</option>
                        ${DEPARTMENTS.map(d => `<option value="${d.slug}" ${u.department===d.slug?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
                    </select>`;
+            // One toggle per brand: which hosts this account may sign in on.
+            const brandControl = ALL_BRANDS.map(b => `
+                <label class="brand-chip ${(u.brands || []).includes(b.id) ? 'on' : ''}">
+                    <input type="checkbox" ${(u.brands || []).includes(b.id) ? 'checked' : ''}
+                           onchange="setBrands(${u.id}, this)" value="${b.id}">
+                    ${escapeHtml(b.name)}
+                </label>`).join('');
             const pending = u.last_login === '-';
             const statusChip = u.is_active === false
                 ? '<span class="status-chip pending" title="Absent de DataSab — connexion refusée">Désactivé</span>'
@@ -225,6 +280,7 @@ function loadUsers() {
                 <td>${escapeHtml(u.email)}</td>
                 <td>${roleControl}</td>
                 <td>${deptControl}</td>
+                <td>${brandControl}</td>
                 <td>${statusChip}</td>
                 <td>${u.last_login}</td>
                 <td>${u.created_at}</td>

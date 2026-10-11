@@ -60,6 +60,32 @@ image, pushes to the OVH registry, syncs `SOPS_SECRETS_JSON` into the
 `sops-secrets` Kubernetes secret, and rolls out `kubernetes/deployment.yaml`
 (Deployment + Service + 3-host Ingress with per-host TLS via cert-manager).
 
+## Brand scoping of users
+
+Each brand's staff is separate. `auth.models.UserBrand` links a user to one or
+more brands; `User.brands` / `has_brand()` / `set_brands()` read and write it,
+and *Utilisateurs* shows a chip per brand, togglable inline.
+
+What it gates:
+
+- **Login** refuses an account that does not belong to the host's brand, on both
+  the Google and the email-code path, and a `before_request` re-checks it so a
+  live session cannot be carried to another brand's host.
+- **The user list** shows only the active brand's users (plus accounts with no
+  brand yet, so they cannot become invisible), and so does the group editor.
+- **`_brand_users(brand)`** — which feeds the approver dropdown, the department
+  owner/contributor pickers, expected readers and change notifications — reads
+  the links instead of guessing from the email domain.
+- **The DataSab sync** only creates, updates or deactivates accounts of the
+  brand it runs for, so syncing Sablésienne cannot touch an Essenciagua user.
+
+Scoping is stored, not derived: 41 of the 79 accounts are on gmail, orange,
+laposte… because most shop and production staff have no company mailbox, so the
+email domain says nothing about the brand. `_backfill_user_brands()` attaches
+pre-existing accounts once, while `user_brands` is empty —
+`lesbonneschoses.io` gets every brand, a brand domain gets its brand, and a
+personal address gets Sablésienne.
+
 ## User sync (DataSab)
 
 *Utilisateurs* has a **Synchroniser depuis DataSab** button.

@@ -22,6 +22,11 @@ keep. Three groups are never deactivated:
       platform's own admins out);
     * whoever is running the sync.
 
+The sync is brand-scoped: it only ever creates, updates or deactivates accounts
+of the brand it is run for, so synchronising Sablésienne cannot touch an
+Essenciagua-only user. Someone already known on another brand simply gains this
+one.
+
 Config: section ``database-datasab`` (host, user, password, name, port) — see
 config/env_loader.py.
 """
@@ -185,7 +190,7 @@ def _revoke_ai_connections(user):
 
 def sync_users(brand, actor_id=None):
     """Make the SOP users match DataSab. Returns a stats dict."""
-    from auth.models import User
+    from auth.models import User, UserBrand
     directory = fetch_users()
 
     dept_cache = {}
@@ -212,12 +217,18 @@ def sync_users(brand, actor_id=None):
         dept_slug = _department_slug(entry['department'], brand, dept_cache)
         user = User.query.filter(db.func.lower(User.email) == email).first()
         if user is None:
-            db.session.add(User(
-                username=_unique_username(email), email=email,
-                first_name=entry['first_name'], last_name=entry['last_name'],
-                role='staff', department=dept_slug, is_active=True))
+            user = User(username=_unique_username(email), email=email,
+                        first_name=entry['first_name'],
+                        last_name=entry['last_name'],
+                        role='staff', department=dept_slug, is_active=True)
+            db.session.add(user)
+            db.session.flush()
+            user.set_brands([brand])   # DataSab is this brand's directory
             stats['created'] += 1
             continue
+        if not user.has_brand(brand):
+            # Already known from another brand: add this one rather than move.
+            db.session.add(UserBrand(user_id=user.id, brand=brand))
 
         changed = False
         if not user.is_active:
@@ -236,9 +247,12 @@ def sync_users(brand, actor_id=None):
         else:
             stats['unchanged'] += 1
 
-    # Anyone active here but no longer listed (or listed as inactive) in DataSab
-    # loses access — except the protected groups, which keep it.
-    for user in User.query.filter(User.is_active.is_(True)).all():
+    # Anyone active *on this brand* but no longer listed (or listed as inactive)
+    # in DataSab loses access — except the protected groups, which keep it.
+    # Users of another brand are none of this sync's business.
+    scoped = (User.query.join(UserBrand, UserBrand.user_id == User.id)
+              .filter(UserBrand.brand == brand, User.is_active.is_(True)))
+    for user in scoped.all():
         if (user.email or '').strip().lower() in active_emails:
             continue
         if _protected(user, actor_id):

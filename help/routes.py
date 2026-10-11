@@ -111,14 +111,12 @@ def owned_departments(user, brand):
 
 
 def _brand_users(brand):
-    """Users considered part of a brand: their email domain is one of the
-    brand's allowed OAuth/login domains. (Users aren't brand-scoped in the DB,
-    so domain membership is the working definition.)"""
-    from auth.models import User
-    from brands import allowed_domains_for_brand
-    domains = set(allowed_domains_for_brand(brand))
-    return [u for u in User.query.all()
-            if u.email and u.email.rsplit('@', 1)[-1].lower() in domains]
+    """Users attached to a brand (auth.models.UserBrand). Email domains are no
+    longer used for this: most shop and production staff are on a personal
+    address, so the domain says nothing about which brand they work for."""
+    from auth.models import User, UserBrand
+    return (User.query.join(UserBrand, UserBrand.user_id == User.id)
+            .filter(UserBrand.brand == brand).all())
 
 
 def _dept_users(brand, dept_slug):

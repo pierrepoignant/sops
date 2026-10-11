@@ -31,15 +31,30 @@ def admin_users():
     brand = getattr(g, 'brand', None) or 'sablesienne'
     departments = (SopDepartment.query.filter_by(brand=brand)
                    .order_by(SopDepartment.sort_order, SopDepartment.name).all())
+    from brands import BRANDS
     return render_template('administration/admin_users.html', groups=groups,
-                           roles=ROLES, departments=departments)
+                           roles=ROLES, departments=departments,
+                           all_brands=[{'id': b['id'], 'name': b['name']}
+                                       for b in BRANDS.values()])
 
 
 @administration_bp.route('/users/api/data')
 @login_required
 @admin_required
 def admin_users_data():
-    users = User.query.order_by(
+    """Users of the active brand only — the platform serves several brands and
+    their staff must not see each other. Accounts with no brand yet are listed
+    too, so they cannot become invisible and unmanageable."""
+    from flask import g
+    from auth.models import UserBrand
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+    attached = db.session.query(UserBrand.user_id).filter(
+        UserBrand.brand == brand).subquery()
+    orphans = db.session.query(UserBrand.user_id).subquery()
+    users = User.query.filter(
+        db.or_(User.id.in_(db.select(attached)),
+               ~User.id.in_(db.select(orphans)))
+    ).order_by(
         case((User.last_login.is_(None), 1), else_=0),
         User.last_login.desc(),
     ).all()
@@ -53,6 +68,7 @@ def admin_users_data():
             'department': u.department or '',
             'is_admin': u.is_admin,
             'is_active': bool(u.is_active),
+            'brands': u.brands,
             'created_at': u.created_at.strftime('%d/%m/%Y %H:%M') if u.created_at else '-',
             'last_login': u.last_login.strftime('%d/%m/%Y %H:%M') if u.last_login else '-',
             'oauth_provider': u.oauth_provider or '-',
@@ -97,6 +113,12 @@ def admin_user_create():
     db.session.add(user)
     db.session.flush()
 
+    from flask import g
+    requested = data.get('brands')
+    if isinstance(requested, str):
+        requested = [b for b in requested.split(',') if b.strip()]
+    user.set_brands(requested or [getattr(g, 'brand', None) or 'sablesienne'])
+
     raw_ids = data.get('group_ids')
     if isinstance(raw_ids, str):
         ids = {int(x) for x in raw_ids.split(',') if x.strip().isdigit()}
@@ -127,6 +149,33 @@ def admin_set_role(user_id):
     user.role = role
     db.session.commit()
     return jsonify(ok=True, role=user.role, is_admin=user.is_admin)
+
+
+@administration_bp.route('/users/<int:user_id>/set-brands', methods=['POST'])
+@login_required
+@admin_required
+def admin_set_brands(user_id):
+    """Replace a user's brands. An admin cannot strip their own access to the
+    brand they are administering — that would lock them out of this screen."""
+    from flask import g
+    from brands import BRANDS
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify(error='Utilisateur introuvable'), 404
+    data = request.get_json(silent=True) or request.form
+    raw = data.get('brands')
+    if isinstance(raw, str):
+        raw = [b for b in raw.split(',') if b.strip()]
+    wanted = [b for b in (raw or []) if b in BRANDS]
+    if not wanted:
+        return jsonify(error='Choisissez au moins une marque.'), 400
+    brand = getattr(g, 'brand', None) or 'sablesienne'
+    if user_id == current_user.id and brand not in wanted:
+        return jsonify(error="Vous ne pouvez pas retirer votre propre accès à "
+                             'cette marque.'), 400
+    user.set_brands(wanted)
+    db.session.commit()
+    return jsonify(ok=True, brands=user.brands)
 
 
 @administration_bp.route('/users/<int:user_id>/set-department', methods=['POST'])
@@ -330,7 +379,10 @@ def groups_edit(group_id):
     group = db.session.get(Group, group_id)
     if not group:
         abort(404)
-    users = User.query.order_by(User.first_name, User.username).all()
+    from help.routes import _brand_users
+    from flask import g
+    users = sorted(_brand_users(getattr(g, 'brand', None) or 'sablesienne'),
+                   key=lambda u: (u.first_name or u.username or '').lower())
     current_module_ids = {gm.module_id for gm in group.modules}
     member_ids = {u.id for u in group.members}
     return render_template('administration/group_edit.html',
